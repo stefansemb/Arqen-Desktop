@@ -21,6 +21,7 @@ _speech_cancelled = False
 _edge_loop = None
 _edge_task = None
 _audio_level_callback = None
+_kokoro_pipeline = None
 
 
 def set_audio_level_callback(callback) -> None:
@@ -120,6 +121,65 @@ def _speech_clean(text: str) -> str:
     text = re.sub(r"^\s*[-•]\s*", "", text, flags=re.MULTILINE)
     text = "".join(char for char in text if unicodedata.category(char) not in {"So", "Sk"})
     return re.sub(r"\s+", " ", text).strip()
+
+
+def _looks_english(text: str) -> bool:
+    """Conservative heuristic used only to select the optional Kokoro voice."""
+    words = set(re.findall(r"[a-z]+", text.casefold()))
+    english_markers = {
+        "a", "an", "and", "are", "can", "could", "do", "for", "from", "hello",
+        "how", "i", "is", "it", "my", "of", "please", "say", "the", "this",
+        "to", "want", "was", "what", "with", "you", "your",
+    }
+    swedish_markers = {"att", "det", "den", "du", "jag", "kan", "med", "och", "som", "är"}
+    return len(words & english_markers) >= 2 and not words.intersection(swedish_markers)
+
+
+def _speak_kokoro(text: str, reset: bool = True) -> bool:
+    """Speak English locally with Kokoro when the optional dependency is available."""
+    global _kokoro_pipeline, _current_process
+    try:
+        from kokoro import KPipeline
+        import numpy as np
+        import soundfile as sf
+    except Exception:
+        return False
+
+    if reset:
+        stop_speech()
+        global _speech_cancelled
+        with _speech_lock:
+            _speech_cancelled = False
+    _speech_done.clear()
+    with _speech_lock:
+        generation = _speech_generation
+
+    def worker() -> None:
+        audio_path = str(Path(tempfile.gettempdir()) / f"arqen_kokoro_{uuid.uuid4().hex}.wav")
+        try:
+            if _kokoro_pipeline is None:
+                _kokoro_pipeline = KPipeline(lang_code="a")
+            pieces = [result.audio.detach().cpu().numpy() for result in _kokoro_pipeline(text, voice="af_heart")]
+            if not pieces:
+                return
+            with _speech_lock:
+                if generation != _speech_generation:
+                    return
+            sf.write(audio_path, np.concatenate(pieces), 24000)
+            player = shutil.which("ffplay")
+            if player:
+                _play_and_analyze_audio(audio_path, generation, player)
+        except Exception:
+            return
+        finally:
+            _speech_done.set()
+            try:
+                Path(audio_path).unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    threading.Thread(target=worker, daemon=True, name="arqen-kokoro-tts").start()
+    return True
 
 
 def stop_speech() -> None:
@@ -252,6 +312,9 @@ class SpeakTextTool(Tool):
         if not text:
             return "No text supplied for speech."
         speech_text = _speech_clean(re.sub(r"arqen", "Arkén", text, flags=re.IGNORECASE))
+        if _looks_english(speech_text) and _speak_kokoro(speech_text):
+            _speech_done.wait()
+            return "Speech started with Kokoro English voice."
         fragments = [chunk.strip() for chunk in re.split(r"(?<=[.!?])\s+|\n+", speech_text) if chunk.strip()]
         chunks: list[str] = []
         current = ""
