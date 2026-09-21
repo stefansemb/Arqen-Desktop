@@ -52,6 +52,10 @@ class ChatBackgroundTextEdit(QTextEdit):
         palette = self.palette()
         palette.setColor(QPalette.ColorRole.PlaceholderText, QColor("#f2f0eb"))
         self.setPalette(palette)
+        viewport_palette = self.viewport().palette()
+        viewport_palette.setColor(QPalette.ColorRole.PlaceholderText, QColor("#f2f0eb"))
+        viewport_palette.setColor(QPalette.ColorRole.Text, QColor("#f2f0eb"))
+        self.viewport().setPalette(viewport_palette)
 
     def resizeEvent(self, event) -> None:
         margin = max(24, int(self.width() * 0.08))
@@ -284,7 +288,8 @@ class ArqenWindow(QMainWindow):
         self.output = ChatBackgroundTextEdit(background_path)
         self.output.setPlaceholderText("Konversationen visas här...")
         self.output.setStyleSheet(
-            "QTextEdit { background: transparent; border: 1px solid #303137; border-radius: 6px; padding: 8px; }"
+            "QTextEdit { background: transparent; color: #f2f0eb; "
+            "border: 1px solid #303137; border-radius: 6px; padding: 8px; }"
         )
         chat_surface = QWidget()
         chat_surface.setObjectName("chatSurface")
