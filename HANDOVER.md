@@ -10,7 +10,7 @@ Arqen Desktop är en PyQt6-baserad lokal AI-assistent med mörkgrå/limegrön Sa
 - Ollama, OpenRouter, OpenAI, Gemini och Claude stöds.
 - API-nycklar sparas separat per provider.
 - Modeller och providerprofiler sparas.
-- Profiler finns: Privat/Ollama, Snabb/OpenRouter, Viktigt/OpenAI och Kreativt arbete/OpenRouter.
+- Profiler finns: Lokal/Ollama, Snabb/OpenRouter, Viktigt/OpenAI och Kreativt arbete/OpenRouter.
 - Fallback med reservprovider, timeout, statusfärg och felorsak.
 - Providerstatistik med svarstid, genomsnitt, fel och fallbackväxlingar.
 - System-, fil-, dokument-, webb-, browser- och väderverktyg.

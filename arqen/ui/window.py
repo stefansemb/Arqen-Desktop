@@ -382,7 +382,7 @@ class ArqenWindow(QMainWindow):
     def provider_status(self, state: str = "READY", elapsed_ms: float | None = None) -> str:
         provider = getattr(self.engine.provider, "provider_name", self.provider_label)
         model = getattr(self.engine.provider, "model", "")
-        profile = {"private": "PRIVATE", "fast": "FAST", "important": "IMPORTANT", "creative": "CREATIVE"}.get(
+        profile = {"private": "LOCAL - OLLAMA", "fast": "FAST", "important": "IMPORTANT", "creative": "CREATIVE"}.get(
             self.profile_name,
             {"local": "PRIVATE", "openrouter": "FAST", "openai": "IMPORTANT"}.get(provider.lower(), "CUSTOM"),
         )
@@ -737,7 +737,7 @@ class ArqenWindow(QMainWindow):
             provider.addItem(label, value)
         provider.setCurrentIndex(max(0, provider.findData(config.name)))
         profile = QComboBox()
-        profile.addItem("Privat – Ollama", "private")
+        profile.addItem("Lokal – Ollama", "private")
         profile.addItem("Snabb – OpenRouter", "fast")
         profile.addItem("Viktigt – OpenAI", "important")
         profile.addItem("Kreativt arbete – OpenRouter", "creative")
