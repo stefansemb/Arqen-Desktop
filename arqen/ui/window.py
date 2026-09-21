@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QCheckBox,
     QFormLayout,
+    QGridLayout,
     QDockWidget,
     QSizePolicy,
     QMenu,
@@ -278,8 +279,19 @@ class ArqenWindow(QMainWindow):
         self.output = ChatBackgroundTextEdit(background_path)
         self.output.setPlaceholderText("Konversationen visas här...")
         self.output.setStyleSheet(
-            "QTextEdit { border: 1px solid #303137; border-radius: 6px; padding: 8px; }"
+            "QTextEdit { background: transparent; border: 1px solid #303137; border-radius: 6px; padding: 8px; }"
         )
+        chat_surface = QWidget()
+        chat_surface.setObjectName("chatSurface")
+        chat_surface.setStyleSheet("QWidget#chatSurface { background: #17181c; border-radius: 6px; }")
+        chat_surface_layout = QGridLayout(chat_surface)
+        chat_surface_layout.setContentsMargins(0, 0, 0, 0)
+        background_label = QLabel(chat_surface)
+        background_label.setPixmap(QPixmap(background_path))
+        background_label.setScaledContents(True)
+        background_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        chat_surface_layout.addWidget(background_label, 0, 0)
+        chat_surface_layout.addWidget(self.output, 0, 0)
 
         input_row = QHBoxLayout()
         self.input = QLineEdit()
@@ -309,7 +321,7 @@ class ArqenWindow(QMainWindow):
         input_row.addWidget(self.cancel_button)
 
         content_layout.addWidget(header)
-        content_layout.addWidget(self.output, 1)
+        content_layout.addWidget(chat_surface, 1)
         content_layout.addLayout(input_row)
         layout.addWidget(sidebar)
         layout.addWidget(content, 1)
