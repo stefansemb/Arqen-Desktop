@@ -225,6 +225,9 @@ class VoiceVisualizationWidget(QLabel):
 
 
 class ArqenWindow(QMainWindow):
+    microphone_status = pyqtSignal(str)
+    microphone_result = pyqtSignal(str)
+
     def __init__(self, engine: ConversationEngine, provider_label: str = "unknown", profile_name: str = "") -> None:
         super().__init__()
         self.engine = engine
@@ -309,14 +312,15 @@ class ArqenWindow(QMainWindow):
         placeholder_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         chat_surface_layout.addWidget(placeholder_label, 0, 0)
         self.output.textChanged.connect(lambda: placeholder_label.setVisible(not bool(self.output.toPlainText())))
-        self.microphone = MicrophoneRecorder(
-            on_result=lambda text: QTimer.singleShot(0, lambda: self.input.setText(text)),
-            on_status=lambda text: QTimer.singleShot(0, lambda: self.set_status(text)),
-        )
-
         input_row = QHBoxLayout()
         self.input = QLineEdit()
         self.input.setPlaceholderText("Skriv ett meddelande...")
+        self.microphone_status.connect(self.set_status)
+        self.microphone_result.connect(self.input.setText)
+        self.microphone = MicrophoneRecorder(
+            on_result=self.microphone_result.emit,
+            on_status=self.microphone_status.emit,
+        )
         self.input.returnPressed.connect(self.send_message)
         send = QPushButton("▶")
         send.setToolTip("Skicka")
