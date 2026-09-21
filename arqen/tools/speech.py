@@ -179,6 +179,7 @@ def _speak_kokoro(text: str, reset: bool = True) -> bool:
         generation = _speech_generation
 
     def worker() -> None:
+        global _current_process
         audio_path = str(Path(tempfile.gettempdir()) / f"arqen_kokoro_{uuid.uuid4().hex}.wav")
         try:
             if _kokoro_pipeline is None:
@@ -192,7 +193,21 @@ def _speak_kokoro(text: str, reset: bool = True) -> bool:
             sf.write(audio_path, np.concatenate(pieces), 24000)
             player = shutil.which("ffplay")
             if player:
-                _play_and_analyze_audio(audio_path, generation, player)
+                _current_process = subprocess.Popen(
+                    [player, "-nodisp", "-autoexit", "-loglevel", "quiet", audio_path],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                )
+                threading.Thread(
+                    target=_analyze_audio,
+                    args=(audio_path, generation),
+                    daemon=True,
+                    name="arqen-kokoro-audio-level",
+                ).start()
+                _current_process.wait()
+                with _speech_lock:
+                    _current_process = None
             else:
                 _play_wav_with_mci(audio_path, generation)
         except Exception:
