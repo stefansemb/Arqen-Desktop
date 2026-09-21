@@ -286,7 +286,7 @@ class ArqenWindow(QMainWindow):
 
         background_path = str(Path(__file__).resolve().parents[2] / "data" / "generated" / "Arqen Chat Background.png")
         self.output = ChatBackgroundTextEdit(background_path)
-        self.output.setPlaceholderText("Konversationen visas här...")
+        self.output.setPlaceholderText("")
         self.output.setStyleSheet(
             "QTextEdit { background: transparent; color: #f2f0eb; "
             "border: 1px solid #303137; border-radius: 6px; padding: 8px; }"
@@ -302,6 +302,12 @@ class ArqenWindow(QMainWindow):
         background_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         chat_surface_layout.addWidget(background_label, 0, 0)
         chat_surface_layout.addWidget(self.output, 0, 0)
+        placeholder_label = QLabel("Konversationen visas här...", chat_surface)
+        placeholder_label.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
+        placeholder_label.setStyleSheet("color: #f2f0eb; background: transparent; padding-top: 8px;")
+        placeholder_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        chat_surface_layout.addWidget(placeholder_label, 0, 0)
+        self.output.textChanged.connect(lambda: placeholder_label.setVisible(not bool(self.output.toPlainText())))
 
         input_row = QHBoxLayout()
         self.input = QLineEdit()
