@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+config/arqen.json
+config/arqen-secrets.json
+config/*.key
+config/*secret*
+data/sessions/
+data/memory.json
+data/undo/
+data/*.mp3
+data/provider_metrics.json

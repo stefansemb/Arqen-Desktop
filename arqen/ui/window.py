@@ -1,0 +1,1045 @@
+from PyQt6.QtWidgets import (
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QMainWindow,
+    QPushButton,
+    QTextEdit,
+    QVBoxLayout,
+    QWidget,
+    QInputDialog,
+    QMessageBox,
+    QDialog,
+    QComboBox,
+    QCheckBox,
+    QFormLayout,
+    QDockWidget,
+    QSizePolicy,
+    QMenu,
+    QTabWidget,
+)
+from PyQt6.QtCore import QEvent, QObject, QSettings, QThread, QTimer, Qt, QUrl, QPoint, QSize, pyqtSignal, pyqtSlot
+from PyQt6.QtGui import QColor, QPainter, QPen, QPixmap
+from urllib.request import Request, urlopen
+import json
+import re
+import threading
+import time
+from pathlib import Path
+
+from arqen.core.engine import ConversationEngine
+from arqen.config.settings import load_provider_config, save_provider_config, load_api_key
+from arqen.providers.config import ProviderConfig
+from arqen.providers.factory import create_provider
+from arqen.ui.theme import CyberpunkGreenTheme
+from arqen.core.provider_metrics import ProviderMetrics
+from arqen.tools.speech import set_audio_level_callback
+
+
+class ResponseWorker(QObject):
+    finished = pyqtSignal(str, float)
+    failed = pyqtSignal(str)
+    tool_requested = pyqtSignal(str)
+    confirmation_required = pyqtSignal(str, object)
+    cancelled = pyqtSignal()
+    partial = pyqtSignal(str)
+
+    def __init__(self, engine: ConversationEngine, prompt: str) -> None:
+        super().__init__()
+        self.engine = engine
+        self.prompt = prompt
+
+    @pyqtSlot()
+    def run(self) -> None:
+        try:
+            self.engine.on_tool_request = lambda name: self.tool_requested.emit(name)
+            self.engine.on_partial_response = lambda text: self.partial.emit(text)
+            self.engine.on_confirmation_required = (
+                lambda name, arguments: self.confirmation_required.emit(name, arguments)
+            )
+            started = time.perf_counter()
+            result = self.engine.respond(self.prompt)
+            elapsed_ms = (time.perf_counter() - started) * 1000
+            if QThread.currentThread().isInterruptionRequested():
+                self.cancelled.emit()
+            else:
+                self.finished.emit(result, elapsed_ms)
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+
+class ConfirmationWorker(QObject):
+    finished = pyqtSignal(str)
+    failed = pyqtSignal(str)
+
+    def __init__(self, engine: ConversationEngine) -> None:
+        super().__init__()
+        self.engine = engine
+
+    @pyqtSlot()
+    def run(self) -> None:
+        try:
+            self.finished.emit(self.engine.confirm_pending_tool(True))
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+
+class VoiceVisualizationWidget(QLabel):
+    """Static visual shell; audio-driven animation will be added without changing the dock."""
+
+    audio_level_changed = pyqtSignal(float)
+
+    def __init__(self, image_path: Path, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._pixmap = QPixmap(str(image_path))
+        self._pulse_angle = 0.0
+        self._audio_level = 0.0
+        self._wave_phase = 0.0
+        self._pulse_timer = QTimer(self)
+        self._pulse_timer.setInterval(40)
+        self._pulse_timer.timeout.connect(self._advance_pulse)
+        self._pulse_timer.start()
+        self.audio_level_changed.connect(self._set_audio_level)
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setMinimumHeight(180)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.setStyleSheet("background: #0b0d0e; border: 1px solid #303538; border-radius: 6px;")
+        self._refresh_pixmap()
+
+    def resizeEvent(self, event) -> None:
+        self._refresh_pixmap()
+        super().resizeEvent(event)
+
+    def paintEvent(self, event) -> None:
+        super().paintEvent(event)
+        if self._pixmap.isNull():
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        center = self.rect().center() + QPoint(-5, -5)
+        base_radius = min(self.width(), self.height()) * 0.245
+        import math
+
+        idle_pulse = (math.sin(self._pulse_angle) + 1.0) / 2.0 * 0.08
+        pulse = max(idle_pulse, self._audio_level)
+        radius = base_radius + pulse * 7.0
+        alpha = int(45 + pulse * 40)
+        pen = QPen(QColor(183, 255, 24, alpha), 3.0)
+        painter.setPen(pen)
+        painter.drawEllipse(center, int(radius), int(radius))
+        self._paint_dynamic_waveform(painter, center)
+        painter.end()
+
+    def _advance_pulse(self) -> None:
+        self._pulse_angle = (self._pulse_angle + 0.12) % (2 * 3.141592653589793)
+        self._wave_phase = (self._wave_phase + 0.16) % (2 * 3.141592653589793)
+        self.update()
+
+    def set_audio_level(self, level: float) -> None:
+        self.audio_level_changed.emit(level)
+
+    def _set_audio_level(self, level: float) -> None:
+        self._audio_level = level
+        self.update()
+
+    def _paint_dynamic_waveform(self, painter: QPainter, center: QPoint) -> None:
+        """Draw a compact responsive waveform over the baked-in image waveform."""
+        import math
+
+        width = min(self.width() * 0.52, 235.0)
+        height = min(self.height() * 0.18, 58.0)
+        # Cover only the old baked waveform, leaving the surrounding inner ring visible.
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(7, 11, 10, 225))
+        mask_radius = min(self.width(), self.height()) * 0.255
+        painter.drawEllipse(center, int(mask_radius), int(mask_radius))
+        level = max(0.045, self._audio_level)
+        points = []
+        samples = 96
+        for index in range(samples):
+            position = index / (samples - 1)
+            envelope = math.sin(math.pi * position) ** 0.7
+            texture = (
+                0.48 * math.sin(position * 29.0 + self._wave_phase)
+                + 0.28 * math.sin(position * 61.0 - self._wave_phase * 1.7)
+                + 0.14 * math.sin(position * 113.0 + self._wave_phase * 0.6)
+            )
+            y = center.y() + texture * envelope * level * height
+            x = center.x() - width / 2 + position * width
+            points.append((int(x), int(y)))
+        pen = QPen(QColor(195, 255, 45, int(180 + level * 75)), 2.0)
+        painter.setPen(pen)
+        for first, second in zip(points, points[1:]):
+            painter.drawLine(first[0], first[1], second[0], second[1])
+        painter.setPen(QPen(QColor(220, 255, 105, 210), 1.0))
+        mirror = [(x, int(2 * center.y() - y)) for x, y in points]
+        for first, second in zip(mirror, mirror[1:]):
+            painter.drawLine(first[0], first[1], second[0], second[1])
+
+    def sizeHint(self) -> QSize:
+        return QSize(400, 300)
+
+    def minimumSizeHint(self) -> QSize:
+        return QSize(300, 220)
+
+    def _refresh_pixmap(self) -> None:
+        if not self._pixmap.isNull():
+            self.setPixmap(self._pixmap.scaled(self.size(), Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation))
+
+
+class ArqenWindow(QMainWindow):
+    def __init__(self, engine: ConversationEngine, provider_label: str = "unknown", profile_name: str = "") -> None:
+        super().__init__()
+        self.engine = engine
+        self.engine.on_tool_request = self.show_tool_request
+        self.setWindowTitle("Arqen Desktop")
+        self.resize(900, 620)
+        self.setStyleSheet(CyberpunkGreenTheme.stylesheet())
+
+        root = QWidget()
+        layout = QHBoxLayout(root)
+        sidebar = QFrame(objectName="panel")
+        sidebar.setFixedWidth(320)
+        sidebar_layout = QVBoxLayout(sidebar)
+        sidebar_layout.addWidget(QLabel("CHATS", objectName="title"))
+        new_chat = QPushButton("NY CHATT")
+        new_chat.clicked.connect(self.create_new_session)
+        sidebar_layout.addWidget(new_chat)
+        self.session_list = QListWidget()
+        self.session_list.setWordWrap(True)
+        self.session_list.setUniformItemSizes(False)
+        self.session_list.itemClicked.connect(lambda _: self.load_selected_session())
+        self.session_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.session_list.customContextMenuRequested.connect(self.show_session_menu)
+        sidebar_layout.addWidget(self.session_list, 1)
+        icon_row = QHBoxLayout()
+        mic_button = QPushButton("🎙")
+        mic_button.setToolTip("Mikrofon av/på")
+        mic_button.setAccessibleName("Mikrofon av/på")
+        mic_button.clicked.connect(lambda: self.set_status("MIC // READY"))
+        self.voice_button = QPushButton("🔊")
+        self.voice_button.setToolTip("Röstläge av/på")
+        self.voice_button.setAccessibleName("Röstläge av/på")
+        self.voice_button.clicked.connect(self.toggle_voice_mode)
+        settings_button = QPushButton("⚙")
+        settings_button.setToolTip("Inställningar")
+        settings_button.setAccessibleName("Inställningar")
+        settings_button.clicked.connect(self.open_settings)
+        for button in (mic_button, self.voice_button, settings_button):
+            button.setMinimumWidth(0)
+            button.setStyleSheet(
+                "QPushButton { background: transparent; color: #b7ff18; border: none; "
+                "font-size: 20px; padding: 2px 8px; }"
+                "QPushButton:hover { color: #e1ff8a; background: #252a20; }"
+            )
+            icon_row.addWidget(button)
+        sidebar_layout.addLayout(icon_row)
+
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        header = QFrame(objectName="panel")
+        header_layout = QVBoxLayout(header)
+        header_layout.addWidget(QLabel("ARQEN DESKTOP", objectName="title"))
+        self.provider_label = provider_label
+        self.profile_name = profile_name
+        self.status = QLabel(
+            self.provider_status("READY"),
+            objectName="status",
+        )
+        header_layout.addWidget(self.status)
+
+        self.output = QTextEdit(readOnly=True)
+        self.output.setPlaceholderText("Konversationen visas här...")
+
+        input_row = QHBoxLayout()
+        self.input = QLineEdit()
+        self.input.setPlaceholderText("Skriv ett meddelande...")
+        self.input.returnPressed.connect(self.send_message)
+        send = QPushButton("▶")
+        send.setToolTip("Skicka")
+        send.setAccessibleName("Skicka")
+        send.setStyleSheet("QPushButton { background: transparent; color: #b7ff18; border: none; font-size: 32px; font-weight: 700; padding: 5px 8px 0 8px; } QPushButton:hover { color: #e1ff8a; }")
+        send.clicked.connect(self.send_message)
+        self.stop_button = QPushButton("■")
+        self.stop_button.setToolTip("Stoppa")
+        self.stop_button.setAccessibleName("Stoppa")
+        self.stop_button.setStyleSheet("QPushButton { background: transparent; color: #b7ff18; border: none; font-size: 28px; font-weight: 700; padding: 0 8px; } QPushButton:hover { color: #e1ff8a; }")
+        self.stop_button.clicked.connect(self.stop_response)
+        self.stop_button.setEnabled(False)
+        self.confirm_button = QPushButton("BEKRÄFTA")
+        self.cancel_button = QPushButton("AVBRYT")
+        self.confirm_button.clicked.connect(lambda: self.resolve_confirmation(True))
+        self.cancel_button.clicked.connect(lambda: self.resolve_confirmation(False))
+        self.confirm_button.setVisible(False)
+        self.cancel_button.setVisible(False)
+        input_row.addWidget(self.input)
+        input_row.addWidget(send)
+        input_row.addWidget(self.stop_button)
+        input_row.addWidget(self.confirm_button)
+        input_row.addWidget(self.cancel_button)
+
+        content_layout.addWidget(header)
+        content_layout.addWidget(self.output, 1)
+        content_layout.addLayout(input_row)
+        layout.addWidget(sidebar)
+        layout.addWidget(content, 1)
+        self.setCentralWidget(root)
+        self._create_visualization_dock()
+        self.engine.on_confirmation_required = self.show_confirmation
+        self._streaming_displayed = False
+        self._stream_candidate = ""
+        self.last_response_ms: float | None = None
+        self.fallback_count = 0
+        self.provider_metrics = ProviderMetrics()
+        self._loading_phase = 0
+        self._loading_timer = QTimer(self)
+        self._loading_timer.setInterval(350)
+        self._loading_timer.timeout.connect(self._animate_loading)
+        self.refresh_sessions()
+
+    def show_session_menu(self, position) -> None:
+        item = self.session_list.itemAt(position)
+        if item is None:
+            return
+        self.session_list.setCurrentItem(item)
+        menu = QMenu(self)
+        open_action = menu.addAction("Öppna")
+        rename_action = menu.addAction("Byt namn")
+        delete_action = menu.addAction("Ta bort")
+        selected = menu.exec(self.session_list.viewport().mapToGlobal(position))
+        if selected == open_action:
+            self.load_selected_session()
+        elif selected == rename_action:
+            self.rename_selected_session()
+        elif selected == delete_action:
+            self.delete_selected_session()
+
+    def _create_visualization_dock(self) -> None:
+        self.visualization_dock = QDockWidget("ARQEN VOICE", self)
+        self.visualization_dock.setObjectName("voiceVisualizationDock")
+        self.visualization_dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
+        self.visualization_dock.setFeatures(
+            QDockWidget.DockWidgetFeature.DockWidgetMovable
+            | QDockWidget.DockWidgetFeature.DockWidgetFloatable
+            | QDockWidget.DockWidgetFeature.DockWidgetClosable
+        )
+        image_path = Path("data") / "generated" / "Arqen Desktop Voice_2.png"
+        visualization = VoiceVisualizationWidget(image_path)
+        self.visualization_dock.setWidget(visualization)
+        set_audio_level_callback(visualization.set_audio_level)
+        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.visualization_dock)
+        self.visualization_dock.setMinimumSize(300, 240)
+        self.visualization_dock.resize(400, 320)
+        self.visualization_dock.setFloating(True)
+        self.visualization_dock.installEventFilter(self)
+        saved_geometry = QSettings("Arqen", "Arqen Desktop").value("voice_visualization_geometry")
+        if saved_geometry:
+            self.visualization_dock.restoreGeometry(saved_geometry)
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if watched is getattr(self, "visualization_dock", None) and event.type() in {
+            QEvent.Type.Move,
+            QEvent.Type.Resize,
+        }:
+            QSettings("Arqen", "Arqen Desktop").setValue(
+                "voice_visualization_geometry",
+                self.visualization_dock.saveGeometry(),
+            )
+        return super().eventFilter(watched, event)
+
+    def send_message(self) -> None:
+        prompt = self.input.text().strip()
+        if not prompt:
+            return
+        self.append_message("DU", prompt, CyberpunkGreenTheme.accent)
+        self._streaming_displayed = False
+        self._stream_candidate = ""
+        self.input.clear()
+        self._loading_phase = 0
+        self._loading_timer.start()
+        self._animate_loading()
+        self.input.setEnabled(False)
+        self.stop_button.setEnabled(True)
+        self.thread = QThread(self)
+        self.worker = ResponseWorker(self.engine, prompt)
+        self.worker.moveToThread(self.thread)
+        self.thread.started.connect(self.worker.run)
+        self.worker.finished.connect(self.response_finished)
+        self.worker.failed.connect(self.response_failed)
+        self.worker.cancelled.connect(self.response_cancelled)
+        self.worker.tool_requested.connect(self.show_tool_request)
+        self.worker.confirmation_required.connect(self.show_confirmation)
+        self.worker.partial.connect(self.show_partial_response)
+        self.worker.finished.connect(self.thread.quit)
+        self.worker.failed.connect(self.thread.quit)
+        self.worker.cancelled.connect(self.thread.quit)
+        self.thread.finished.connect(self.response_thread_finished)
+        self.thread.start()
+
+    def provider_status(self, state: str = "READY", elapsed_ms: float | None = None) -> str:
+        provider = getattr(self.engine.provider, "provider_name", self.provider_label)
+        model = getattr(self.engine.provider, "model", "")
+        profile = {"private": "PRIVATE", "fast": "FAST", "important": "IMPORTANT", "creative": "CREATIVE"}.get(
+            self.profile_name,
+            {"local": "PRIVATE", "openrouter": "FAST", "openai": "IMPORTANT"}.get(provider.lower(), "CUSTOM"),
+        )
+        details = f"PROFILE: {profile} // {provider.upper()} / {model}" if model else f"PROFILE: {profile} // {provider.upper()}"
+        if getattr(self.engine.provider, "fallback_used", False):
+            details = f"FALLBACK // {details}"
+            reason = getattr(self.engine.provider, "fallback_reason", "")
+            if reason:
+                details += f" // {reason}"
+        suffix = f" // {elapsed_ms / 1000:.1f}s" if elapsed_ms is not None else ""
+        return f"{state} // {details}{suffix}"
+
+    def set_status(self, text: str) -> None:
+        upper = text.upper()
+        color = CyberpunkGreenTheme.muted
+        if "ERROR" in upper:
+            color = CyberpunkGreenTheme.danger
+        elif "FALLBACK" in upper:
+            color = "#ffad4d"
+        elif any(name in upper for name in ("OPENAI", "OPENROUTER", "GEMINI", "CLAUDE")):
+            color = "#75bfff"
+        elif "READY" in upper or "LOCAL" in upper:
+            color = CyberpunkGreenTheme.accent
+        self.status.setStyleSheet(f"color: {color}; letter-spacing: 1px;")
+        self.status.setText(text)
+
+    def response_finished(self, result: str, elapsed_ms: float) -> None:
+        self._loading_timer.stop()
+        self.last_response_ms = elapsed_ms
+        active_provider = getattr(self.engine.provider, "provider_name", self.provider_label)
+        active_model = getattr(self.engine.provider, "model", "")
+        fallback_used = getattr(self.engine.provider, "fallback_used", False)
+        self.provider_metrics.record(active_provider, active_model, elapsed_ms, True, fallback_used)
+        if fallback_used:
+            self.fallback_count += 1
+        if not self._streaming_displayed:
+            self.append_message("ARQEN", result, CyberpunkGreenTheme.text)
+        else:
+            self.output.append("")
+        self.voice_button.setText("🔊" if self.engine.voice_enabled else "🔇")
+        if self.engine.last_response_speakable:
+            from arqen.tools.speech import SpeakTextTool
+            self.stop_button.setEnabled(True)
+            threading.Thread(
+                target=lambda: SpeakTextTool().run({"text": result}),
+                daemon=True,
+                name="arqen-auto-speech",
+            ).start()
+            QTimer.singleShot(250, self._refresh_speech_stop_state)
+        self.set_status(self.provider_status("READY // RESPONSE COMPLETE", elapsed_ms))
+        self.refresh_sessions()
+
+    def show_partial_response(self, text: str) -> None:
+        text = text.replace("\\*", "").replace("*", "")
+        self._stream_candidate += text
+        candidate = self._stream_candidate.lstrip()
+        if candidate.startswith("{") or candidate.startswith("<tool_call"):
+            return
+        if not self._streaming_displayed:
+            self.output.append("<b>ARQEN:</b>")
+            self._streaming_displayed = True
+        cursor = self.output.textCursor()
+        cursor.movePosition(cursor.MoveOperation.End)
+        self.output.setTextCursor(cursor)
+        self.output.insertPlainText(self._stream_candidate)
+        self._stream_candidate = ""
+
+    def _refresh_speech_stop_state(self) -> None:
+        try:
+            from arqen.tools.speech import _speech_done
+            if not _speech_done.is_set():
+                self.stop_button.setEnabled(True)
+                QTimer.singleShot(250, self._refresh_speech_stop_state)
+                return
+            thread = getattr(self, "thread", None)
+            if thread is None or not thread.isRunning():
+                self.stop_button.setEnabled(False)
+        except RuntimeError:
+            # Qt object may have been deleted during thread cleanup.
+            return
+
+    def response_failed(self, message: str) -> None:
+        self._loading_timer.stop()
+        self.provider_metrics.record(
+            getattr(self.engine.provider, "provider_name", self.provider_label),
+            getattr(self.engine.provider, "model", ""),
+            0.0,
+            False,
+            getattr(self.engine.provider, "fallback_used", False),
+        )
+        self.append_message("FEL", message, CyberpunkGreenTheme.danger)
+        self.set_status(self.provider_status("ERROR // REQUEST FAILED"))
+
+    def response_cancelled(self) -> None:
+        self._loading_timer.stop()
+        self.set_status(self.provider_status("STOPPED // RESPONSE DISCARDED"))
+
+    def _animate_loading(self) -> None:
+        self._loading_phase = (self._loading_phase + 1) % 4
+        dots = "." * self._loading_phase
+        self.set_status(self.provider_status(f"WORKING // PROCESSING REQUEST{dots}"))
+
+    def response_thread_finished(self) -> None:
+        self.worker.deleteLater()
+        self.thread.deleteLater()
+        self.input.setEnabled(True)
+        self.stop_button.setEnabled(False)
+        self.input.setFocus()
+
+    def stop_response(self) -> None:
+        try:
+            from arqen.tools.speech import stop_speech
+            stop_speech()
+        except Exception:
+            pass
+        try:
+            thread = getattr(self, "thread", None)
+            if thread is not None and thread.isRunning():
+                thread.requestInterruption()
+            self.set_status(self.provider_status("STOPPED // RESPONSE DISCARDED"))
+            self.stop_button.setEnabled(False)
+        except RuntimeError:
+            # The response thread may already have been deleted by Qt.
+            return
+
+    def toggle_voice_mode(self) -> None:
+        self.engine.voice_enabled = not self.engine.voice_enabled
+        if self.engine.voice_enabled:
+            self.voice_button.setText("🔊")
+            self.set_status(self.provider_status("VOICE // ENABLED"))
+        else:
+            try:
+                from arqen.tools.speech import stop_speech
+                stop_speech()
+            except Exception:
+                pass
+            self.voice_button.setText("🔇")
+            self.set_status(self.provider_status("VOICE // DISABLED"))
+
+    def show_tool_request(self, name: str) -> None:
+        self.set_status(f"TOOL // {name.upper()}")
+        self.append_message("TOOL", name, CyberpunkGreenTheme.muted)
+
+    def append_message(self, sender: str, content: str, color: str) -> None:
+        content = re.sub(r"\\\\?n", "\n", content)
+        content = re.sub(r"\\\r?\n", "\n", content)
+        content = content.replace("\\*", "*").replace("\\-", "-")
+        safe_content = self.render_content(content)
+        self.output.append(
+            f"<div style='margin:6px 0;'><b style='color:{color}'>{sender}:</b> "
+            f"<span style='color:{CyberpunkGreenTheme.text}'>{safe_content}</span></div>"
+        )
+
+    @staticmethod
+    def render_content(content: str) -> str:
+        lines = content.splitlines() or [content]
+        rendered = []
+        table_rows = []
+
+        def flush_table() -> None:
+            if not table_rows:
+                return
+            rendered.append("<table style='border-collapse:collapse; margin:4px 0;'>")
+            for index, row in enumerate(table_rows):
+                cells = [cell.strip() for cell in row.strip().strip("|").split("|")]
+                if index == 1 and all(set(cell) <= {"-", ":", " "} for cell in cells):
+                    continue
+                tag = "th" if index == 0 else "td"
+                cells = [re.sub(r"`([^`]+)`", r"<code style='color:#58f28b'>\1</code>", cell) for cell in cells]
+                cells = [re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", cell) for cell in cells]
+                rendered.append("<tr>" + "".join(
+                    f"<{tag} style='border:1px solid #244132; padding:4px 8px;'>{cell}</{tag}>" for cell in cells
+                ) + "</tr>")
+            rendered.append("</table>")
+            table_rows.clear()
+
+        for line in lines:
+            if line.strip().startswith("|"):
+                table_rows.append(line)
+                continue
+            flush_table()
+            if re.fullmatch(r"\s*([-_*])\1\1+\s*", line):
+                continue
+            escaped = line.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            escaped = re.sub(r"^#{1,2} (.+)$", r"<b style='font-size:16px'>\1</b>", escaped)
+            escaped = re.sub(r"^#{3,6} (.+)$", r"<b>\1</b>", escaped)
+            escaped = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", escaped)
+            escaped = re.sub(r"\*(.+?)\*", r"<i>\1</i>", escaped)
+            escaped = re.sub(r"`([^`]+)`", r"<code style='color:#58f28b'>\1</code>", escaped)
+            escaped = re.sub(r"^- ", "• ", escaped)
+            rendered.append(escaped + "<br>")
+        flush_table()
+        result = "".join(rendered)
+        return result[:-4] if result.endswith("<br>") else result
+
+    def refresh_sessions(self) -> None:
+        self.session_list.clear()
+        for session in self.engine.session_store.list_sessions():
+            item = QListWidgetItem(session.title)
+            item.setData(Qt.ItemDataRole.UserRole, session.session_id)
+            self.session_list.addItem(item)
+
+    def create_new_session(self) -> None:
+        title, accepted = QInputDialog.getText(self, "Ny chatt", "Titel:")
+        if not accepted:
+            return
+        self.engine.new_session(title.strip() or "Ny chatt")
+        self.output.clear()
+        self.status.setText("READY // NEW SESSION")
+        self.refresh_sessions()
+
+    def load_selected_session(self) -> None:
+        item = self.session_list.currentItem()
+        if item is None:
+            return
+        session_id = item.data(Qt.ItemDataRole.UserRole)
+        matches = [s for s in self.engine.session_store.list_sessions() if s.session_id == session_id]
+        if not matches:
+            return
+        session = self.engine.load_session(matches[0].session_id)
+        self.output.clear()
+        for message in session.messages:
+            if message.role == "user":
+                self.append_message("DU", message.content, CyberpunkGreenTheme.accent)
+            elif message.role == "assistant":
+                self.append_message("ARQEN", message.content, CyberpunkGreenTheme.text)
+            elif message.role == "tool":
+                self.append_message("TOOL RESULT", message.content, CyberpunkGreenTheme.muted)
+                self.show_generated_image(message.content)
+        self.status.setText("READY // SESSION LOADED")
+
+    def selected_session(self):
+        item = self.session_list.currentItem()
+        if item is None:
+            return None
+        session_id = item.data(Qt.ItemDataRole.UserRole)
+        matches = [s for s in self.engine.session_store.list_sessions() if s.session_id == session_id]
+        return matches[0] if matches else None
+
+    def rename_selected_session(self) -> None:
+        session = self.selected_session()
+        if session is None:
+            return
+        title, accepted = QInputDialog.getText(self, "Byt namn", "Nytt namn:", text=session.title)
+        if accepted and title.strip():
+            session.title = title.strip()
+            self.engine.session_store.save(session)
+            if session.session_id == self.engine.session.session_id:
+                self.engine.session.title = session.title
+            self.refresh_sessions()
+
+    def delete_selected_session(self) -> None:
+        session = self.selected_session()
+        if session is None:
+            return
+        answer = QMessageBox.question(
+            self,
+            "Ta bort chatt",
+            f"Vill du ta bort '{session.title}'?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self.engine.session_store.delete(session.session_id)
+        if session.session_id == self.engine.session.session_id:
+            self.engine.new_session()
+            self.output.clear()
+        self.refresh_sessions()
+
+    def show_confirmation(self, name: str, arguments: dict | None = None) -> None:
+        self.set_status(f"CONFIRMATION REQUIRED // {name.upper()}")
+        details = ""
+        if arguments:
+            details = " | " + ", ".join(
+                f"{key}: {str(value)[:160]}" for key, value in arguments.items()
+            )
+        self.append_message("CONFIRM", f"{name}{details}", CyberpunkGreenTheme.accent)
+        self.confirm_button.setVisible(True)
+        self.cancel_button.setVisible(True)
+        self.confirm_button.setEnabled(True)
+        self.cancel_button.setEnabled(True)
+
+    def resolve_confirmation(self, accepted: bool) -> None:
+        self.confirm_button.setVisible(False)
+        self.cancel_button.setVisible(False)
+        if not accepted:
+            result = self.engine.confirm_pending_tool(False)
+            self.output.append(f"<b>ARQEN:</b> {result}")
+            self.set_status("READY // CONFIRMATION CANCELLED")
+            return
+        self.set_status(self.provider_status("WORKING // RUNNING CONFIRMED TOOL"))
+        self.confirm_thread = QThread(self)
+        self.confirm_worker = ConfirmationWorker(self.engine)
+        self.confirm_worker.moveToThread(self.confirm_thread)
+        self.confirm_thread.started.connect(self.confirm_worker.run)
+        self.confirm_worker.finished.connect(self.confirmation_finished)
+        self.confirm_worker.failed.connect(self.confirmation_failed)
+        self.confirm_worker.finished.connect(self.confirm_thread.quit)
+        self.confirm_worker.failed.connect(self.confirm_thread.quit)
+        self.confirm_thread.finished.connect(self.confirm_worker.deleteLater)
+        self.confirm_thread.finished.connect(self.confirm_thread.deleteLater)
+        self.confirm_thread.start()
+
+    def confirmation_finished(self, result: str) -> None:
+        self.output.append(f"<b>ARQEN:</b> {result}")
+        self.show_generated_image(result)
+        self.set_status("READY // CONFIRMATION RESOLVED")
+
+    def show_generated_image(self, result: str) -> None:
+        image_match = re.search(r"Bild skapad:\s*(.+)$", result)
+        if image_match:
+            image_path = Path(image_match.group(1).strip()).resolve()
+            if image_path.exists():
+                image_url = QUrl.fromLocalFile(str(image_path)).toString()
+                self.output.append(f"<div style='margin:8px 0;'><img src='{image_url}' width='640'></div>")
+
+    def confirmation_failed(self, message: str) -> None:
+        self.append_message("FEL", message, CyberpunkGreenTheme.danger)
+        self.set_status("ERROR // CONFIRMATION FAILED")
+
+    def open_settings(self) -> None:
+        config = load_provider_config()
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Arqen-inställningar")
+        dialog.setMinimumSize(960, 760)
+        dialog.setStyleSheet(CyberpunkGreenTheme.stylesheet())
+        dialog_layout = QVBoxLayout(dialog)
+        dialog_layout.setContentsMargins(20, 18, 20, 18)
+        tabs = QTabWidget()
+        profile_tab = QWidget()
+        provider_tab = QWidget()
+        fallback_tab = QWidget()
+        stats_tab = QWidget()
+        profile_form = QFormLayout(profile_tab)
+        provider_form = QFormLayout(provider_tab)
+        fallback_form = QFormLayout(fallback_tab)
+        for tab_form in (profile_form, provider_form, fallback_form):
+            tab_form.setContentsMargins(10, 12, 10, 12)
+            tab_form.setHorizontalSpacing(18)
+            tab_form.setVerticalSpacing(12)
+        stats_layout = QVBoxLayout(stats_tab)
+        stats_layout.setContentsMargins(10, 12, 10, 12)
+        tabs.addTab(profile_tab, "Profil")
+        tabs.addTab(provider_tab, "Provider")
+        tabs.addTab(fallback_tab, "Fallback")
+        tabs.addTab(stats_tab, "Statistik")
+        dialog_layout.addWidget(tabs, 1)
+
+        provider = QComboBox()
+        provider_items = [("Local Ollama", "local"), ("OpenAI", "openai"), ("OpenRouter", "openrouter"), ("Gemini", "gemini"), ("Claude", "claude"), ("Demo", "demo")]
+        for label, value in provider_items:
+            provider.addItem(label, value)
+        provider.setCurrentIndex(max(0, provider.findData(config.name)))
+        profile = QComboBox()
+        profile.addItem("Privat – Ollama", "private")
+        profile.addItem("Snabb – OpenRouter", "fast")
+        profile.addItem("Viktigt – OpenAI", "important")
+        profile.addItem("Kreativt arbete – OpenRouter", "creative")
+        saved_profile = {"private": "private", "fast": "fast", "important": "important", "creative": "creative"}.get(config.profile_name, "")
+        if saved_profile:
+            profile.setCurrentIndex(profile.findData(saved_profile))
+        profile_form.addRow("Profil", profile)
+        profile_hint = QLabel()
+        profile_hint.setWordWrap(True)
+        profile_form.addRow("Beskrivning", profile_hint)
+        profile_descriptions = {
+            "private": "Lokal och privat. Använder Ollama utan moln-fallback.",
+            "fast": "Snabb vardagsprofil. Använder OpenRouter med Ollama som reserv.",
+            "important": "För viktigare uppgifter. Använder OpenAI utan automatisk fallback.",
+            "creative": "För idéer, texter och kreativa arbetsflöden. Bildgenerering kan kopplas till profilen senare.",
+        }
+        profile_hint.setText(profile_descriptions[profile.currentData()])
+        profile.currentIndexChanged.connect(
+            lambda _: profile_hint.setText(profile_descriptions[profile.currentData()])
+        )
+        model = QComboBox()
+        model.setEditable(True)
+        model.setMinimumWidth(520)
+        model.addItem(f"[{config.name.upper()}] {config.model}", config.model)
+        model_search = QLineEdit()
+        model_search.setPlaceholderText("Sök modell...")
+        provider_form.addRow("Sök modell", model_search)
+        model_search.textChanged.connect(lambda text: self.filter_model_choices(model, text))
+        model_search.returnPressed.connect(lambda: self.filter_model_choices(model, model_search.text()))
+        base_url = QLineEdit(config.base_url)
+        timeout = QLineEdit(str(config.timeout))
+        api_key = QLineEdit(config.api_key)
+        api_key.setEchoMode(QLineEdit.EchoMode.Password)
+        provider_form.addRow("Provider", provider)
+        provider_form.addRow("Modell", model)
+        provider_form.addRow("URL", base_url)
+        provider_form.addRow("API-nyckel", api_key)
+        provider_form.addRow("Timeout", timeout)
+        fallback_enabled = QCheckBox("Aktivera fallback vid providerfel")
+        fallback_enabled.setChecked(config.fallback_enabled)
+        fallback_provider = QComboBox()
+        for label, value in provider_items:
+            if value != config.name:
+                fallback_provider.addItem(label, value)
+        fallback_provider.setCurrentIndex(max(0, fallback_provider.findData(config.fallback_provider)))
+        fallback_timeout = QLineEdit(str(config.fallback_timeout))
+        fallback_form.addRow("Fallback", fallback_enabled)
+        fallback_form.addRow("Reservprovider", fallback_provider)
+        fallback_form.addRow("Fallback-timeout (s)", fallback_timeout)
+        provider_info = QLabel(self.provider_overview(fallback_enabled.isChecked()))
+        provider_info.setWordWrap(True)
+        fallback_form.addRow("Providerstatus", provider_info)
+        stats_button = QPushButton("VISA PROVIDERSTATISTIK")
+        stats_button.setObjectName("secondaryButton")
+        stats_button.clicked.connect(self.show_provider_metrics)
+        stats_layout.addWidget(stats_button)
+        reset_stats = QPushButton("NOLLSTÄLL STATISTIK")
+        reset_stats.setObjectName("secondaryButton")
+        reset_stats.clicked.connect(self.reset_provider_metrics)
+        stats_layout.addWidget(reset_stats)
+        provider.currentIndexChanged.connect(
+            lambda _: self.configure_provider_fields(provider.currentData(), model, base_url)
+        )
+        provider.currentIndexChanged.connect(lambda _: api_key.setText(load_api_key(provider.currentData())))
+        self.configure_provider_fields(config.name, model, base_url)
+        model.clear()
+        model.addItem(f"[{config.name.upper()}] {config.model}", config.model)
+        model.setCurrentText(config.model)
+
+        apply_profile = QPushButton("TILLÄMPA PROFIL")
+        apply_profile.setObjectName("secondaryButton")
+        apply_profile.clicked.connect(
+            lambda: self.apply_provider_profile(
+                profile.currentData(), provider, model, base_url, timeout, api_key,
+                fallback_enabled, fallback_provider, fallback_timeout,
+            )
+        )
+        profile_form.addRow(apply_profile)
+
+        refresh_models = QPushButton("HÄMTA MODELLER")
+        refresh_models.setObjectName("secondaryButton")
+        refresh_models.clicked.connect(lambda: self.load_local_models(model, base_url.text(), api_key.text(), provider.currentData()))
+        actions_layout = QHBoxLayout()
+        actions_layout.addWidget(refresh_models)
+
+        test_connection = QPushButton("TESTA ANSLUTNING")
+        test_connection.setObjectName("secondaryButton")
+        test_connection.clicked.connect(
+            lambda: self.test_provider_connection(provider.currentData(), model.currentData() or model.currentText(), base_url.text(), api_key.text())
+        )
+        actions_layout.addWidget(test_connection)
+
+        save = QPushButton("SPARA")
+        save.setObjectName("primaryButton")
+        save.clicked.connect(
+            lambda: self.save_settings(
+                dialog,
+                provider.currentData(),
+                re.sub(r"^\[[^\]]+\]\s*", "", model.currentText()),
+                base_url.text(),
+                timeout.text(),
+                api_key.text(),
+                fallback_enabled.isChecked(),
+                fallback_provider.currentData() or "",
+                fallback_timeout.text(),
+                profile.currentData(),
+            )
+        )
+        actions_layout.addWidget(save)
+        dialog_layout.addLayout(actions_layout)
+        for button in (stats_button, reset_stats, apply_profile, refresh_models, test_connection, save):
+            button.setAutoDefault(False)
+            button.setDefault(False)
+        dialog.exec()
+
+    def apply_provider_profile(self, profile: str, provider: QComboBox, model: QComboBox, base_url: QLineEdit, timeout: QLineEdit, api_key: QLineEdit, fallback_enabled: QCheckBox, fallback_provider: QComboBox, fallback_timeout: QLineEdit) -> None:
+        presets = {
+            "private": ("local", "", "http://127.0.0.1:11434/v1", 60.0, False, ""),
+            "fast": ("openrouter", "openai/gpt-5.6-luna", "https://openrouter.ai/api/v1", 120.0, True, "local"),
+            "important": ("openai", "gpt-5.6", "https://api.openai.com/v1", 120.0, False, ""),
+            "creative": ("openrouter", "openai/gpt-5.6-luna", "https://openrouter.ai/api/v1", 120.0, True, "local"),
+        }
+        name, preset_model, url, wait, fallback, reserve = presets[profile]
+        provider.setCurrentIndex(max(0, provider.findData(name)))
+        self.configure_provider_fields(name, model, base_url)
+        if preset_model:
+            model.clear()
+            model.addItem(f"[{name.upper()}] {preset_model}", preset_model)
+            model.setCurrentText(preset_model)
+        base_url.setText(url)
+        timeout.setText(str(wait))
+        api_key.setText(load_api_key(name))
+        fallback_enabled.setChecked(fallback)
+        fallback_provider.setCurrentIndex(max(0, fallback_provider.findData(reserve)))
+        fallback_timeout.setText("10.0")
+
+    def provider_overview(self, fallback_enabled: bool | None = None) -> str:
+        provider = getattr(self.engine.provider, "provider_name", self.provider_label).upper()
+        model = getattr(self.engine.provider, "model", "") or "okänd modell"
+        used = getattr(self.engine.provider, "fallback_used", False)
+        if fallback_enabled is True and not used:
+            fallback = "aktiverad, inte använd ännu"
+        elif fallback_enabled is False:
+            fallback = "avstängd"
+        else:
+            fallback = "används nu" if used else "inte aktiverad"
+        elapsed = f"{self.last_response_ms / 1000:.1f} s" if self.last_response_ms is not None else "ingen mätning ännu"
+        metrics = self.provider_metrics._load().get(f"{provider.lower()}/{model}", {})
+        avg_ms = metrics.get("total_ms", 0) / metrics.get("requests", 1)
+        return (
+            f"Aktiv: {provider} / {model}\n"
+            f"Fallback: {fallback}\n"
+            f"Senaste svarstid: {elapsed}\n"
+            f"Fallbackväxlingar: {self.fallback_count}\n"
+            f"Historik: {metrics.get('requests', 0)} svar, genomsnitt {avg_ms / 1000:.1f} s"
+        )
+
+    def show_provider_metrics(self) -> None:
+        metrics = self.provider_metrics._load()
+        if not metrics:
+            text = "Ingen providerstatistik finns ännu."
+        else:
+            rows = []
+            sorted_metrics = sorted(
+                metrics.items(),
+                key=lambda pair: (pair[1].get("total_ms", 0) / pair[1].get("requests", 1)) if pair[1].get("requests", 0) else float("inf"),
+            )
+            for key, item in sorted_metrics:
+                requests = item.get("requests", 0)
+                average = item.get("total_ms", 0) / requests / 1000 if requests else 0
+                success_rate = (item.get("successes", 0) / requests * 100) if requests else 0
+                rows.append(
+                    f"{key}\n"
+                    f"  Svar: {requests} | Lyckade: {item.get('successes', 0)} | Fel: {item.get('errors', 0)} | Lyckandegrad: {success_rate:.0f}%\n"
+                    f"  Genomsnitt: {average:.1f} s | Fallback: {item.get('fallbacks', 0)}"
+                )
+            text = "\n\n".join(rows)
+        QMessageBox.information(self, "Providerstatistik", text)
+
+    def reset_provider_metrics(self) -> None:
+        answer = QMessageBox.question(
+            self,
+            "Nollställ statistik",
+            "Vill du ta bort all sparad providerstatistik?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if answer == QMessageBox.StandardButton.Yes:
+            self.provider_metrics.reset()
+            QMessageBox.information(self, "Providerstatistik", "Providerstatistiken är nollställd.")
+
+    def save_settings(self, dialog: QDialog, name: str, model: str, base_url: str, timeout: str, api_key: str, fallback_enabled: bool = False, fallback_provider: str = "", fallback_timeout: str = "10", profile_name: str = "") -> None:
+        try:
+            config = ProviderConfig(
+                name=name,
+                model=model.strip(),
+                base_url=base_url.strip().rstrip("/"),
+                timeout=float(timeout),
+                api_key=api_key.strip(),
+                fallback_enabled=fallback_enabled,
+                fallback_provider=fallback_provider,
+                fallback_timeout=float(fallback_timeout),
+                profile_name=profile_name,
+            )
+            self.engine.provider = create_provider(config)
+            save_provider_config(config)
+            self.provider_label = config.name
+            self.profile_name = profile_name
+            self.set_status(self.provider_status("READY // PROVIDER UPDATED"))
+            dialog.accept()
+        except (ValueError, TypeError) as exc:
+            QMessageBox.warning(dialog, "Ogiltiga inställningar", str(exc))
+
+    @staticmethod
+    def filter_model_choices(model_box: QComboBox, query: str) -> None:
+        query = query.casefold().strip()
+        current = model_box.currentText()
+        for index in range(model_box.count()):
+            model_box.view().setRowHidden(index, bool(query) and query not in model_box.itemText(index).casefold())
+        if current:
+            model_box.setEditText(current)
+
+    def load_local_models(self, model_box: QComboBox, base_url: str, api_key: str = "", provider: str = "local") -> None:
+        try:
+            url = f"{base_url.rstrip('/')}/models"
+            headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+            if provider == "claude":
+                headers = {"x-api-key": api_key, "anthropic-version": "2023-06-01"}
+            elif provider == "gemini":
+                url = f"{url}?key={api_key}"
+                headers = {}
+            request = Request(url, headers=headers)
+            with urlopen(request, timeout=5) as response:
+                data = json.loads(response.read().decode("utf-8"))
+            models = [item.get("id") for item in data.get("data", []) if item.get("id")]
+            if provider == "gemini":
+                models = [item.get("name", "").removeprefix("models/") for item in data.get("models", []) if item.get("name")]
+            if models:
+                current = model_box.currentData() or model_box.currentText()
+                model_box.clear()
+                for model_id in models:
+                    model_box.addItem(f"[{provider.upper()}] {model_id}", model_id)
+                selected = models.index(current) if current in models else 0
+                model_box.setCurrentIndex(selected)
+        except Exception as exc:
+            QMessageBox.warning(self, "Modeller kunde inte hämtas", str(exc))
+
+    def configure_provider_fields(self, provider: str, model_box: QComboBox, base_url: QLineEdit) -> None:
+        defaults = {
+            "local": ("http://127.0.0.1:11434/v1", "qwen3:8b"),
+            "openai": ("https://api.openai.com/v1", "gpt-5"),
+            "openrouter": ("https://openrouter.ai/api/v1", "openai/gpt-4o-mini"),
+            "gemini": ("https://generativelanguage.googleapis.com/v1beta", "gemini-2.5-flash"),
+            "claude": ("https://api.anthropic.com/v1", "claude-sonnet-4-20250514"),
+            "demo": ("", "demo"),
+        }
+        url, model = defaults.get(provider, (base_url.text(), model_box.currentText()))
+        try:
+            saved = json.loads((Path("config") / "arqen.json").read_text(encoding="utf-8"))
+            profile = saved.get("providers", {}).get(provider, {})
+            url = profile.get("base_url", url)
+            model = profile.get("model", model)
+            model = re.sub(r"^\[[^\]]+\]\s*", "", str(model))
+        except (OSError, json.JSONDecodeError):
+            pass
+        base_url.setText(url)
+        model_box.clear()
+        model_box.addItem(f"[{provider.upper()}] {model}", model)
+        model_box.setCurrentText(model)
+        if provider in {"openai", "openrouter"}:
+            model_box.setToolTip("Tryck HÄMTA OLLAMA-MODELLER för att läsa provider-modeller")
+        else:
+            model_box.setToolTip("Skriv eller välj modell för denna provider")
+
+    def test_provider_connection(self, provider: str, model: str, base_url: str, api_key: str = "") -> None:
+        if provider == "demo":
+            QMessageBox.information(self, "Anslutning OK", "Demo-providern är tillgänglig.")
+            return
+        try:
+            url = f"{base_url.rstrip('/')}/models"
+            headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+            if provider == "claude":
+                headers = {"x-api-key": api_key, "anthropic-version": "2023-06-01"}
+            elif provider == "gemini":
+                url = f"{url}?key={api_key}"
+                headers = {}
+            request = Request(url, headers=headers)
+            with urlopen(request, timeout=5) as response:
+                data = json.loads(response.read().decode("utf-8"))
+            available = {item.get("id") for item in data.get("data", [])}
+            if provider == "gemini":
+                available = {
+                    item.get("name", "").removeprefix("models/")
+                    for item in data.get("models", [])
+                    if item.get("name")
+                }
+            if model not in available:
+                raise RuntimeError(f"Modellen finns inte hos providern: {model}")
+            QMessageBox.information(self, "Anslutning OK", f"Provider svarar och modellen finns:\n{model}")
+        except Exception as exc:
+            QMessageBox.warning(self, "Anslutning misslyckades", str(exc))
+
+    @staticmethod
+    def model_label(model_id: str) -> str:
+        kind = "CLOUD" if model_id.lower().endswith(":cloud") else "LOCAL"
+        return f"[{kind}] {model_id}"
