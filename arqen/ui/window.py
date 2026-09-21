@@ -259,7 +259,7 @@ class ArqenWindow(QMainWindow):
         self.output.setStyleSheet(
             "QTextEdit { background-color: #17181c; "
             f"background-image: url('{background_path}'); "
-            "background-position: center; background-repeat: no-repeat; "
+            "background-position: center; background-repeat: no-repeat; background-size: cover; "
             "border: 1px solid #303137; border-radius: 6px; padding: 8px; }"
         )
 
