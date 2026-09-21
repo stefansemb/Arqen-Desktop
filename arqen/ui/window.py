@@ -51,6 +51,8 @@ class ChatBackgroundTextEdit(QTextEdit):
         self.viewport().setStyleSheet("background: transparent;")
 
     def resizeEvent(self, event) -> None:
+        margin = max(24, int(self.width() * 0.08))
+        self.setViewportMargins(margin, 0, margin, 0)
         if not self._background.isNull():
             scaled = self._background.scaled(
                 self.viewport().size(),
