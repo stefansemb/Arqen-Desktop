@@ -49,6 +49,9 @@ class ChatBackgroundTextEdit(QTextEdit):
         self.setAutoFillBackground(True)
         self.viewport().setAutoFillBackground(True)
         self.viewport().setStyleSheet("background: transparent;")
+        palette = self.palette()
+        palette.setColor(QPalette.ColorRole.PlaceholderText, QColor("#f2f0eb"))
+        self.setPalette(palette)
 
     def resizeEvent(self, event) -> None:
         margin = max(24, int(self.width() * 0.08))
