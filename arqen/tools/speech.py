@@ -191,25 +191,14 @@ def _speak_kokoro(text: str, reset: bool = True) -> bool:
                 if generation != _speech_generation:
                     return
             sf.write(audio_path, np.concatenate(pieces), 24000)
-            player = shutil.which("ffplay")
-            if player:
-                _current_process = subprocess.Popen(
-                    [player, "-nodisp", "-autoexit", "-loglevel", "quiet", audio_path],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-                )
-                threading.Thread(
-                    target=_analyze_audio,
-                    args=(audio_path, generation),
-                    daemon=True,
-                    name="arqen-kokoro-audio-level",
-                ).start()
-                _current_process.wait()
-                with _speech_lock:
-                    _current_process = None
-            else:
-                _play_wav_with_mci(audio_path, generation)
+            import winsound
+            threading.Thread(
+                target=_analyze_audio,
+                args=(audio_path, generation),
+                daemon=True,
+                name="arqen-kokoro-audio-level",
+            ).start()
+            winsound.PlaySound(audio_path, winsound.SND_FILENAME)
         except Exception:
             return
         finally:
