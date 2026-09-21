@@ -50,14 +50,21 @@ class MicrophoneRecorder:
         self._stream = None
         if stream is None:
             return
+        self.on_status("MIC // STOPPING")
+        threading.Thread(target=self._finish_recording, args=(stream,), daemon=True, name="arqen-mic-stop").start()
+
+    def _finish_recording(self, stream) -> None:
         try:
             stream.stop()
             stream.close()
-        finally:
-            with self._lock:
-                chunks = list(self._chunks)
-                self._chunks = []
-            threading.Thread(target=self._transcribe, args=(chunks,), daemon=True, name="arqen-whisper").start()
+        except Exception as exc:
+            self.on_status(f"MIC // ERROR // {exc}")
+            return
+        with self._lock:
+            chunks = list(self._chunks)
+            self._chunks = []
+        print(f"Microphone captured {len(chunks)} audio chunks", flush=True)
+        threading.Thread(target=self._transcribe, args=(chunks,), daemon=True, name="arqen-whisper").start()
 
     def _transcribe(self, chunks: list[object]) -> None:
         self._transcribing = True
@@ -73,6 +80,7 @@ class MicrophoneRecorder:
                 self.on_status("MIC // TOO SHORT")
                 return
             self.on_status("MIC // TRANSCRIBING")
+            print("Microphone transcription started", flush=True)
             model = WhisperModel("base", device="cpu", compute_type="int8")
             segments, _ = model.transcribe(audio, language="sv", vad_filter=True)
             text = " ".join(segment.text.strip() for segment in segments).strip()
