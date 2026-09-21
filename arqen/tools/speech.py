@@ -181,7 +181,7 @@ def _speak_kokoro(text: str, reset: bool = True) -> bool:
         generation = _speech_generation
 
     def worker() -> None:
-        global _current_process
+        global _current_process, _kokoro_pipeline, _kokoro_last_error
         audio_path = str(Path(tempfile.gettempdir()) / f"arqen_kokoro_{uuid.uuid4().hex}.wav")
         try:
             if _kokoro_pipeline is None:
