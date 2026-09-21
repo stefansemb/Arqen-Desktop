@@ -24,7 +24,7 @@ from PyQt6.QtWidgets import (
     QTabWidget,
 )
 from PyQt6.QtCore import QEvent, QObject, QSettings, QThread, QTimer, Qt, QUrl, QPoint, QSize, pyqtSignal, pyqtSlot
-from PyQt6.QtGui import QColor, QPainter, QPen, QPixmap
+from PyQt6.QtGui import QColor, QBrush, QPainter, QPalette, QPen, QPixmap
 from urllib.request import Request, urlopen
 import json
 import re
@@ -39,6 +39,25 @@ from arqen.providers.factory import create_provider
 from arqen.ui.theme import CyberpunkGreenTheme
 from arqen.core.provider_metrics import ProviderMetrics
 from arqen.tools.speech import set_audio_level_callback
+
+
+class ChatBackgroundTextEdit(QTextEdit):
+    def __init__(self, background_path: str) -> None:
+        super().__init__(readOnly=True)
+        self._background = QPixmap(background_path)
+        self.setAutoFillBackground(True)
+
+    def resizeEvent(self, event) -> None:
+        if not self._background.isNull():
+            scaled = self._background.scaled(
+                self.viewport().size(),
+                Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            palette = self.viewport().palette()
+            palette.setBrush(QPalette.ColorRole.Base, QBrush(scaled))
+            self.viewport().setPalette(palette)
+        super().resizeEvent(event)
 
 
 class ResponseWorker(QObject):
@@ -253,13 +272,11 @@ class ArqenWindow(QMainWindow):
         )
         header_layout.addWidget(self.status)
 
-        self.output = QTextEdit(readOnly=True)
+        background_path = str(Path(__file__).resolve().parents[2] / "data" / "generated" / "Arqen Chat Background.png")
+        self.output = ChatBackgroundTextEdit(background_path)
         self.output.setPlaceholderText("Konversationen visas här...")
-        background_path = (Path(__file__).resolve().parents[2] / "data" / "generated" / "Arqen Chat Background.png").as_posix()
         self.output.setStyleSheet(
-            "QTextEdit { background-color: #17181c; "
-            f"background-image: url('{background_path}'); "
-            "background-position: center; background-repeat: no-repeat; background-size: cover; "
+            "QTextEdit { background: transparent; "
             "border: 1px solid #303137; border-radius: 6px; padding: 8px; }"
         )
 
