@@ -22,6 +22,7 @@ _edge_loop = None
 _edge_task = None
 _audio_level_callback = None
 _kokoro_pipeline = None
+_kokoro_last_error: str | None = None
 
 
 def set_audio_level_callback(callback) -> None:
@@ -161,7 +162,8 @@ def _looks_english(text: str) -> bool:
 
 def _speak_kokoro(text: str, reset: bool = True) -> bool:
     """Speak English locally with Kokoro when the optional dependency is available."""
-    global _kokoro_pipeline, _current_process
+    global _kokoro_pipeline, _current_process, _kokoro_last_error
+    _kokoro_last_error = None
     try:
         from kokoro import KPipeline
         import numpy as np
@@ -191,6 +193,7 @@ def _speak_kokoro(text: str, reset: bool = True) -> bool:
                 if generation != _speech_generation:
                     return
             sf.write(audio_path, np.concatenate(pieces), 24000)
+            print(f"Kokoro TTS generated {len(np.concatenate(pieces))} samples at {audio_path}", flush=True)
             import winsound
             threading.Thread(
                 target=_analyze_audio,
@@ -199,7 +202,10 @@ def _speak_kokoro(text: str, reset: bool = True) -> bool:
                 name="arqen-kokoro-audio-level",
             ).start()
             winsound.PlaySound(audio_path, winsound.SND_FILENAME)
-        except Exception:
+            print("Kokoro TTS playback completed", flush=True)
+        except Exception as exc:
+            _kokoro_last_error = f"{type(exc).__name__}: {exc}"
+            print(f"Kokoro TTS error: {_kokoro_last_error}", flush=True)
             return
         finally:
             _speech_done.set()
@@ -344,7 +350,9 @@ class SpeakTextTool(Tool):
         speech_text = _speech_clean(re.sub(r"arqen", "Arkén", text, flags=re.IGNORECASE))
         if _looks_english(speech_text) and _speak_kokoro(speech_text):
             _speech_done.wait()
-            return "Speech started with Kokoro English voice."
+            if _kokoro_last_error is None:
+                return "Speech started with Kokoro English voice."
+            return f"Kokoro failed: {_kokoro_last_error}. Falling back to Edge TTS."
         fragments = [chunk.strip() for chunk in re.split(r"(?<=[.!?])\s+|\n+", speech_text) if chunk.strip()]
         chunks: list[str] = []
         current = ""
