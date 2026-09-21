@@ -40,6 +40,7 @@ from arqen.providers.factory import create_provider
 from arqen.ui.theme import CyberpunkGreenTheme
 from arqen.core.provider_metrics import ProviderMetrics
 from arqen.tools.speech import set_audio_level_callback
+from arqen.tools.microphone import MicrophoneRecorder
 
 
 class ChatBackgroundTextEdit(QTextEdit):
@@ -249,10 +250,10 @@ class ArqenWindow(QMainWindow):
         self.session_list.customContextMenuRequested.connect(self.show_session_menu)
         sidebar_layout.addWidget(self.session_list, 1)
         icon_row = QHBoxLayout()
-        mic_button = QPushButton("🎙")
-        mic_button.setToolTip("Mikrofon av/på")
-        mic_button.setAccessibleName("Mikrofon av/på")
-        mic_button.clicked.connect(lambda: self.set_status("MIC // READY"))
+        self.mic_button = QPushButton("🎙")
+        self.mic_button.setToolTip("Starta/stoppa mikrofoninspelning")
+        self.mic_button.setAccessibleName("Starta/stoppa mikrofoninspelning")
+        self.mic_button.clicked.connect(self.toggle_microphone)
         self.voice_button = QPushButton("🔇")
         self.voice_button.setToolTip("Röstläge av/på")
         self.voice_button.setAccessibleName("Röstläge av/på")
@@ -261,7 +262,7 @@ class ArqenWindow(QMainWindow):
         settings_button.setToolTip("Inställningar")
         settings_button.setAccessibleName("Inställningar")
         settings_button.clicked.connect(self.open_settings)
-        for button in (mic_button, self.voice_button, settings_button):
+        for button in (self.mic_button, self.voice_button, settings_button):
             button.setMinimumWidth(0)
             button.setStyleSheet(
                 "QPushButton { background: transparent; color: #b7ff18; border: none; "
@@ -308,6 +309,10 @@ class ArqenWindow(QMainWindow):
         placeholder_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         chat_surface_layout.addWidget(placeholder_label, 0, 0)
         self.output.textChanged.connect(lambda: placeholder_label.setVisible(not bool(self.output.toPlainText())))
+        self.microphone = MicrophoneRecorder(
+            on_result=lambda text: QTimer.singleShot(0, lambda: self.input.setText(text)),
+            on_status=lambda text: QTimer.singleShot(0, lambda: self.set_status(text)),
+        )
 
         input_row = QHBoxLayout()
         self.input = QLineEdit()
@@ -576,6 +581,16 @@ class ArqenWindow(QMainWindow):
                 pass
             self.voice_button.setText("🔇")
             self.set_status(self.provider_status("VOICE // DISABLED"))
+
+    def toggle_microphone(self) -> None:
+        if self.microphone.recording:
+            self.microphone.stop()
+            self.mic_button.setText("🎙")
+            self.mic_button.setToolTip("Starta mikrofoninspelning")
+        else:
+            if self.microphone.start():
+                self.mic_button.setText("⏺")
+                self.mic_button.setToolTip("Stoppa mikrofoninspelning")
 
     def show_tool_request(self, name: str) -> None:
         self.set_status(f"TOOL // {name.upper()}")
