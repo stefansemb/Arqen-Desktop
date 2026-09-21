@@ -220,7 +220,7 @@ class ArqenWindow(QMainWindow):
         mic_button.setToolTip("Mikrofon av/på")
         mic_button.setAccessibleName("Mikrofon av/på")
         mic_button.clicked.connect(lambda: self.set_status("MIC // READY"))
-        self.voice_button = QPushButton("🔊")
+        self.voice_button = QPushButton("🔇")
         self.voice_button.setToolTip("Röstläge av/på")
         self.voice_button.setAccessibleName("Röstläge av/på")
         self.voice_button.clicked.connect(self.toggle_voice_mode)

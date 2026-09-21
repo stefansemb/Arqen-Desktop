@@ -110,6 +110,30 @@ def _play_and_analyze_audio(audio_path: str, generation: int, player_path: str) 
         _emit_audio_level(0.0)
 
 
+def _play_wav_with_mci(audio_path: str, generation: int) -> None:
+    """Play a generated WAV through Windows when ffplay is unavailable."""
+    global _current_alias
+    if not hasattr(ctypes, "windll"):
+        return
+    alias = f"arqen_kokoro_{uuid.uuid4().hex}"
+    with _speech_lock:
+        _current_alias = alias
+    try:
+        result = ctypes.windll.winmm.mciSendStringW(
+            f'open "{audio_path}" type waveaudio alias {alias}', None, 0, None
+        )
+        if result != 0 or generation != _speech_generation:
+            return
+        threading.Thread(target=_analyze_audio, args=(audio_path, generation), daemon=True, name="arqen-audio-level").start()
+        ctypes.windll.winmm.mciSendStringW(f"play {alias} wait", None, 0, None)
+    finally:
+        ctypes.windll.winmm.mciSendStringW(f"stop {alias}", None, 0, None)
+        ctypes.windll.winmm.mciSendStringW(f"close {alias}", None, 0, None)
+        with _speech_lock:
+            if _current_alias == alias:
+                _current_alias = None
+
+
 def _speech_clean(text: str) -> str:
     text = re.sub(r"\[[^\]]*\]\(https?://[^)]*\)", "", text)
     text = re.sub(r"https?://\S+", "", text)
@@ -169,6 +193,8 @@ def _speak_kokoro(text: str, reset: bool = True) -> bool:
             player = shutil.which("ffplay")
             if player:
                 _play_and_analyze_audio(audio_path, generation, player)
+            else:
+                _play_wav_with_mci(audio_path, generation)
         except Exception:
             return
         finally:
