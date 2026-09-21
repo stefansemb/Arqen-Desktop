@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -253,6 +255,13 @@ class ArqenWindow(QMainWindow):
 
         self.output = QTextEdit(readOnly=True)
         self.output.setPlaceholderText("Konversationen visas här...")
+        background_path = (Path(__file__).resolve().parents[2] / "data" / "generated" / "Arqen Chat Background.png").as_posix()
+        self.output.setStyleSheet(
+            "QTextEdit { background-color: #17181c; "
+            f"background-image: url('{background_path}'); "
+            "background-position: center; background-repeat: no-repeat; "
+            "border: 1px solid #303137; border-radius: 6px; padding: 8px; }"
+        )
 
         input_row = QHBoxLayout()
         self.input = QLineEdit()
