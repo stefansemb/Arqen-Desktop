@@ -46,6 +46,8 @@ class ChatBackgroundTextEdit(QTextEdit):
         super().__init__(readOnly=True)
         self._background = QPixmap(background_path)
         self.setAutoFillBackground(True)
+        self.viewport().setAutoFillBackground(True)
+        self.viewport().setStyleSheet("background: transparent;")
 
     def resizeEvent(self, event) -> None:
         if not self._background.isNull():
@@ -276,8 +278,7 @@ class ArqenWindow(QMainWindow):
         self.output = ChatBackgroundTextEdit(background_path)
         self.output.setPlaceholderText("Konversationen visas här...")
         self.output.setStyleSheet(
-            "QTextEdit { background: transparent; "
-            "border: 1px solid #303137; border-radius: 6px; padding: 8px; }"
+            "QTextEdit { border: 1px solid #303137; border-radius: 6px; padding: 8px; }"
         )
 
         input_row = QHBoxLayout()
