@@ -3,6 +3,9 @@ from __future__ import annotations
 import threading
 from typing import Callable
 
+_whisper_model = None
+_whisper_lock = threading.Lock()
+
 
 class MicrophoneRecorder:
     """Record the Windows default microphone and transcribe it locally."""
@@ -79,11 +82,20 @@ class MicrophoneRecorder:
             if len(audio) < 1600:
                 self.on_status("MIC // TOO SHORT")
                 return
-            self.on_status("MIC // TRANSCRIBING")
+            self.on_status("MIC // LOADING MODEL")
             print("Microphone transcription started", flush=True)
-            model = WhisperModel("base", device="cpu", compute_type="int8")
+            global _whisper_model
+            with _whisper_lock:
+                if _whisper_model is None:
+                    print("Whisper model loading started", flush=True)
+                    _whisper_model = WhisperModel("base", device="cpu", compute_type="int8")
+                    print("Whisper model loading completed", flush=True)
+                model = _whisper_model
+            self.on_status("MIC // DECODING")
+            print("Whisper decoding started", flush=True)
             segments, _ = model.transcribe(audio, language="sv", vad_filter=True)
             text = " ".join(segment.text.strip() for segment in segments).strip()
+            print("Whisper decoding completed", flush=True)
             if text:
                 self.on_result(text)
                 self.on_status("MIC // READY")
