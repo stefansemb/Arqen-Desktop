@@ -112,17 +112,10 @@ class OpenWebpageTool(Tool):
             raise ValueError("URL must start with http:// or https://")
         if not webbrowser.open(url, new=0):
             raise RuntimeError("Could not open the default web browser")
-        # Keep the URL available if the user follows up with an Arqen-browser
-        # action such as clicking an in-page hash link.
-        try:
-            from arqen.tools.browser_tools import STATE
-            STATE.url = url
-            from arqen.tools.browser_tools import _browser_call
-            _browser_call(lambda page: page.goto(url, wait_until="domcontentloaded", timeout=30_000))
-        except Exception:
-            # Opening the user's default browser remains successful even if
-            # the optional internal reader cannot be started.
-            pass
+        # Do not also start Arqen's internal Chromium browser here.  That
+        # would open a second browser window alongside the user's default
+        # browser.  Browser automation is handled explicitly by
+        # ``browser_navigate`` instead.
         return f"Opened web page: {url}"
 
 
