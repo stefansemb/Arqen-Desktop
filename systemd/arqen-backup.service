@@ -1,0 +1,6 @@
+[Unit]
+Description=Arqen daily backup
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/arqen-backup
