@@ -806,7 +806,7 @@ class ArqenWindow(QMainWindow):
         dialog_layout.addWidget(tabs, 1)
 
         provider = QComboBox()
-        provider_items = [("Local Ollama", "local"), ("OpenAI", "openai"), ("OpenRouter", "openrouter"), ("Gemini", "gemini"), ("Claude", "claude"), ("Demo", "demo")]
+        provider_items = [("Local Ollama", "local"), ("Arqen Remote", "arqen-remote"), ("OpenAI", "openai"), ("OpenRouter", "openrouter"), ("Gemini", "gemini"), ("Claude", "claude"), ("Demo", "demo")]
         for label, value in provider_items:
             provider.addItem(label, value)
         provider.setCurrentIndex(max(0, provider.findData(config.name)))
@@ -1061,6 +1061,7 @@ class ArqenWindow(QMainWindow):
     def configure_provider_fields(self, provider: str, model_box: QComboBox, base_url: QLineEdit) -> None:
         defaults = {
             "local": ("http://127.0.0.1:11434/v1", "qwen3:8b"),
+            "arqen-remote": ("https://api.samidatools.com", "qwen3:4b"),
             "openai": ("https://api.openai.com/v1", "gpt-5"),
             "openrouter": ("https://openrouter.ai/api/v1", "openai/gpt-4o-mini"),
             "gemini": ("https://generativelanguage.googleapis.com/v1beta", "gemini-2.5-flash"),

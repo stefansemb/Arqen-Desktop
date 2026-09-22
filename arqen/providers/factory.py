@@ -3,6 +3,7 @@ from arqen.providers.config import ProviderConfig
 from arqen.providers.demo import DemoProvider
 from arqen.providers.local import LocalProvider
 from arqen.providers.cloud import OpenAICompatibleProvider, GeminiProvider, ClaudeProvider
+from arqen.providers.remote import ArqenRemoteProvider
 from arqen.config.settings import load_provider_profile
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 
@@ -45,6 +46,8 @@ def create_provider(config: ProviderConfig) -> AIProvider:
         primary = DemoProvider()
     elif config.name == "local":
         primary = LocalProvider(base_url=config.base_url, model=config.model, timeout=config.timeout, api_key=config.api_key)
+    elif config.name == "arqen-remote":
+        primary = ArqenRemoteProvider(config.base_url, config.timeout, config.api_key, config.model)
     elif config.name in {"openai", "openrouter"}:
         primary = OpenAICompatibleProvider(config.base_url, config.model, config.timeout, config.api_key, config.name)
     elif config.name == "gemini":
