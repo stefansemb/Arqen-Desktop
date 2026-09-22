@@ -23,7 +23,7 @@ def main() -> None:
         screen = window.screen() or app.primaryScreen()
         if screen is not None:
             window.move(screen.availableGeometry().center() - window.frameGeometry().center())
-    QTimer.singleShot(0, center_window)
+    QTimer.singleShot(250, center_window)
     sys.exit(app.exec())
 
 
