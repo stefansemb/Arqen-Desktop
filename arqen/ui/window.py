@@ -419,6 +419,27 @@ class ArqenWindow(QMainWindow):
         if not prompt:
             return
         self.append_message("DU", prompt, CyberpunkGreenTheme.accent)
+        # Voice/text confirmations should resolve the visible confirmation
+        # dialog instead of being sent back to the model as a new prompt.
+        if getattr(self.engine.executor, "_pending", None) is not None:
+            normalized = re.sub(r"[^a-zåäö0-9 ]", " ", prompt.casefold())
+            normalized = " ".join(normalized.split())
+            affirmative = (
+                normalized in {"ja", "japp", "yes", "bekräfta", "bekrafta", "kör", "kor"}
+                or normalized.startswith(("ja ", "japp ", "yes ", "bekräfta ", "bekrafta ", "kör ", "kor "))
+                or "öppna den" in normalized
+                or "oppna den" in normalized
+                or "jag öppnar" in normalized
+                or "jag oppnar" in normalized
+            )
+            negative = normalized in {"nej", "no", "avbryt", "ångra", "angra"} or normalized.startswith(
+                ("nej ", "no ", "avbryt ")
+            )
+            self.input.clear()
+            if affirmative or negative:
+                self._loading_timer.stop()
+                self.resolve_confirmation(affirmative)
+                return
         self._streaming_displayed = False
         self._stream_candidate = ""
         self.input.clear()
