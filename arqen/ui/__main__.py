@@ -22,7 +22,13 @@ def main() -> None:
     def center_window() -> None:
         screen = window.screen() or app.primaryScreen()
         if screen is not None:
-            window.move(screen.virtualGeometry().center() - window.frameGeometry().center())
+            area = screen.availableGeometry()
+            frame = window.frameGeometry()
+            x = area.center().x() - frame.width() // 2
+            y = area.center().y() - frame.height() // 2
+            x = max(area.left(), min(x, area.right() - frame.width() + 1))
+            y = max(area.top(), min(y, area.bottom() - frame.height() + 1))
+            window.move(x, y)
     QTimer.singleShot(250, center_window)
     sys.exit(app.exec())
 
