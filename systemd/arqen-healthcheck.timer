@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Arqen VPS health check every five minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+Unit=arqen-healthcheck.service
+
+[Install]
+WantedBy=timers.target

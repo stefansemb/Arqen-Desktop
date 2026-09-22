@@ -1,0 +1,6 @@
+[Unit]
+Description=Arqen VPS health check
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/arqen-healthcheck
