@@ -100,7 +100,7 @@ class FetchWebpageTool(Tool):
 class OpenWebpageTool(Tool):
     name = "open_webpage"
     description = "Opens a public URL in the computer's default web browser."
-    requires_confirmation = True
+    requires_confirmation = False
     arguments_schema = {"url": str}
 
     def normalize_arguments(self, arguments: dict[str, Any]) -> dict[str, Any]:

@@ -6,7 +6,7 @@ from arqen.tools.base import Tool
 class CloseProgramTool(Tool):
     name = "close_program"
     description = "Terminates one running local process by PID or exact process name."
-    requires_confirmation = True
+    requires_confirmation = False
     arguments_schema = {"target": str}
 
     def _matches(self, target: str):

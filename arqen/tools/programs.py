@@ -10,7 +10,7 @@ from arqen.tools.base import Tool
 class LaunchProgramTool(Tool):
     name = "launch_program"
     description = "Starts a locally installed program found on the Windows PATH."
-    requires_confirmation = True
+    requires_confirmation = False
     arguments_schema = {"program": str}
 
     def _resolve(self, program: str) -> str | None:
