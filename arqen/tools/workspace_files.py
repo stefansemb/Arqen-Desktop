@@ -9,15 +9,32 @@ from arqen.config import paths
 UNDO = FileUndoStore()
 
 
+def describe_size(path: Path) -> str:
+    """A file's size, so listings can be compared without reading them.
+
+    Asked which of several files is shortest, a model that only gets names
+    has to open every one of them; with sizes it answers from the listing.
+    """
+    try:
+        size = path.stat().st_size
+    except OSError:
+        return "?"
+    if size < 1024:
+        return f"{size} B"
+    if size < 1024 * 1024:
+        return f"{size / 1024:.1f} kB"
+    return f"{size / (1024 * 1024):.1f} MB"
+
+
 class WorkspaceFilesTool(Tool):
     name = "workspace_files"
-    description = "Lists files in the Arqen workspace root."
+    description = "Lists files and their sizes in the Arqen workspace root."
     requires_confirmation = False
 
     def run(self, arguments: dict[str, Any]) -> str:
         root = paths.workspace_root()
         entries = sorted(
-            path.name + ("/" if path.is_dir() else "")
+            path.name + "/" if path.is_dir() else f"{path.name}\t{describe_size(path)}"
             for path in root.iterdir()
             if path.name not in {".git", "__pycache__", ".venv"}
         )
@@ -26,7 +43,7 @@ class WorkspaceFilesTool(Tool):
 
 class SearchWorkspaceFilesTool(Tool):
     name = "search_workspace_files"
-    description = "Searches recursively for file names inside the Arqen workspace."
+    description = "Searches recursively for file names and sizes inside the Arqen workspace."
     requires_confirmation = False
     arguments_schema = {"query": str}
 
@@ -41,7 +58,7 @@ class SearchWorkspaceFilesTool(Tool):
             if any(part in ignored for part in path.parts):
                 continue
             if path.is_file() and query in path.name.lower():
-                results.append(str(path.relative_to(root)))
+                results.append(f"{path.relative_to(root)}\t{describe_size(path)}")
             if len(results) >= 100:
                 break
         return "\n".join(results) or f"No files found for: {query}"

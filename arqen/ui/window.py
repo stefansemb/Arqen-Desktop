@@ -244,6 +244,48 @@ class VoiceVisualizationWidget(QLabel):
 
 
 
+_EMPHASIS = re.compile(r"\*\*(?P<strong>[^*\n]+?)\*\*|\*(?P<em>[^*\s][^*\n]*?)\*")
+
+
+def strip_emphasis(text: str) -> str:
+    """Drop markdown emphasis markers without touching arithmetic.
+
+    Streamed text is inserted as plain text, so ``**like this**`` would show
+    its asterisks.  Removing every asterisk instead turned ``c * r`` into
+    ``c r`` and quietly corrupted any code the model wrote, so only matched
+    pairs that sit flush against their content are removed.
+    """
+    return _EMPHASIS.sub(lambda match: match.group("strong") or match.group("em"), text.replace("\\*", "*"))
+
+
+# Long enough for any reasonable run of bold text, short enough that a stray
+# asterisk cannot stall the stream for the rest of the answer.
+_PENDING_LIMIT = 240
+
+
+def split_pending(text: str) -> tuple[str, str]:
+    """Split streamed text into what can be shown and what must wait.
+
+    Emphasis arrives in pieces -- ``**vik`` in one chunk and ``tigt**`` in the
+    next -- so an asterisk that still has no partner is held back until the
+    rest catches up.  An asterisk with space on both sides is arithmetic and
+    never a marker, so it goes straight through.
+    """
+    text = strip_emphasis(text)
+    last = text.rfind("*")
+    if last < 0 or len(text) > _PENDING_LIMIT:
+        return text, ""
+    # ``**`` is one marker: splitting inside the run would leak half of it.
+    start = last
+    while start > 0 and text[start - 1] == "*":
+        start -= 1
+    if last + 1 == len(text):
+        # Nothing has arrived after it yet, so there is nothing to judge by.
+        return text[:start], text[start:]
+    after = text[last + 1]
+    return (text[:start], text[start:]) if not after.isspace() else (text, "")
+
+
 class StatsPanelWidget(QWidget):
     """Tokens and cost for the session, and for everything recorded so far."""
 
@@ -680,6 +722,9 @@ class ArqenWindow(QMainWindow):
 
     def response_finished(self, result: str, elapsed_ms: float) -> None:
         self._loading_timer.stop()
+        # Nothing more is coming, so anything still waiting on a closing
+        # marker has to be shown as it stands.
+        self._flush_pending_text()
         self.last_response_ms = elapsed_ms
         active_provider = getattr(self.engine.provider, "provider_name", self.provider_label)
         active_model = getattr(self.engine.provider, "model", "")
@@ -714,25 +759,36 @@ class ArqenWindow(QMainWindow):
         this the text that follows the tool is inserted at the end of the
         document, which is the TOOL line itself.
         """
+        self._flush_pending_text()
         self._streaming_displayed = False
         self._stream_candidate = ""
+
+    def _flush_pending_text(self) -> None:
+        """Show text held back waiting for a closing marker that never came."""
+        pending, self._stream_candidate = self._stream_candidate, ""
+        if pending and self._streaming_displayed:
+            self._insert_streamed(strip_emphasis(pending))
+
+    def _insert_streamed(self, text: str) -> None:
+        cursor = self.output.textCursor()
+        cursor.movePosition(cursor.MoveOperation.End)
+        self.output.setTextCursor(cursor)
+        self.output.insertPlainText(text)
 
     def show_partial_response(self, text: str) -> None:
         if getattr(self, "_cancel_requested", False):
             return
-        text = text.replace("\\*", "").replace("*", "")
         self._stream_candidate += text
         candidate = self._stream_candidate.lstrip()
         if candidate.startswith("{") or candidate.startswith("<tool_call"):
             return
+        ready, self._stream_candidate = split_pending(self._stream_candidate)
+        if not ready:
+            return
         if not self._streaming_displayed:
             self.output.append("<b>ARQEN:</b>")
             self._streaming_displayed = True
-        cursor = self.output.textCursor()
-        cursor.movePosition(cursor.MoveOperation.End)
-        self.output.setTextCursor(cursor)
-        self.output.insertPlainText(self._stream_candidate)
-        self._stream_candidate = ""
+        self._insert_streamed(ready)
 
     def _refresh_speech_stop_state(self) -> None:
         try:
