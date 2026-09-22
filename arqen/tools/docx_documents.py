@@ -2,6 +2,7 @@ from pathlib import Path
 from typing import Any
 
 from arqen.tools.base import Tool
+from arqen.config import paths
 
 
 class ReadDocxTool(Tool):
@@ -11,7 +12,7 @@ class ReadDocxTool(Tool):
     arguments_schema = {"path": str}
 
     def run(self, arguments: dict[str, Any]) -> str:
-        root = Path.cwd().resolve()
+        root = paths.workspace_root()
         candidate = (root / arguments["path"]).resolve()
         if root not in candidate.parents or candidate.suffix.lower() != ".docx":
             raise PermissionError("DOCX path must be inside the Arqen workspace")

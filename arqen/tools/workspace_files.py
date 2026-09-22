@@ -3,6 +3,7 @@ from typing import Any
 
 from arqen.tools.base import Tool
 from arqen.core.file_undo import FileUndoStore
+from arqen.config import paths
 
 
 UNDO = FileUndoStore()
@@ -14,7 +15,7 @@ class WorkspaceFilesTool(Tool):
     requires_confirmation = False
 
     def run(self, arguments: dict[str, Any]) -> str:
-        root = Path.cwd().resolve()
+        root = paths.workspace_root()
         entries = sorted(
             path.name + ("/" if path.is_dir() else "")
             for path in root.iterdir()
@@ -30,7 +31,7 @@ class SearchWorkspaceFilesTool(Tool):
     arguments_schema = {"query": str}
 
     def run(self, arguments: dict[str, Any]) -> str:
-        root = Path.cwd().resolve()
+        root = paths.workspace_root()
         query = arguments["query"].strip().lower()
         if not query:
             raise ValueError("Search query cannot be empty")
@@ -53,7 +54,7 @@ class SearchWorkspaceContentTool(Tool):
     arguments_schema = {"query": str}
 
     def run(self, arguments: dict[str, Any]) -> str:
-        root = Path.cwd().resolve()
+        root = paths.workspace_root()
         query = arguments["query"].strip().lower()
         if not query:
             raise ValueError("Content search query cannot be empty")
@@ -84,7 +85,7 @@ class ReadWorkspaceFileTool(Tool):
     arguments_schema = {"path": str}
 
     def run(self, arguments: dict[str, Any]) -> str:
-        root = Path.cwd().resolve()
+        root = paths.workspace_root()
         candidate = (root / arguments["path"]).resolve()
         if root not in candidate.parents and candidate != root:
             raise PermissionError("Path is outside the Arqen workspace")
@@ -102,7 +103,7 @@ class WriteWorkspaceFileTool(Tool):
     arguments_schema = {"path": str, "content": str}
 
     def run(self, arguments: dict[str, Any]) -> str:
-        root = Path.cwd().resolve()
+        root = paths.workspace_root()
         candidate = (root / arguments["path"]).resolve()
         if root not in candidate.parents:
             raise PermissionError("Path is outside the Arqen workspace")
@@ -122,13 +123,13 @@ class DeleteWorkspaceFileTool(Tool):
     arguments_schema = {"path": str}
 
     def preflight(self, arguments: dict[str, Any]) -> str | None:
-        candidate = (Path.cwd().resolve() / arguments["path"]).resolve()
+        candidate = (paths.workspace_root() / arguments["path"]).resolve()
         if not candidate.is_file():
             return f"File not found: {arguments['path']}"
         return None
 
     def run(self, arguments: dict[str, Any]) -> str:
-        root = Path.cwd().resolve()
+        root = paths.workspace_root()
         candidate = (root / arguments["path"]).resolve()
         if root not in candidate.parents:
             raise PermissionError("Path is outside the Arqen workspace")
@@ -146,7 +147,7 @@ class MoveWorkspaceFileTool(Tool):
     arguments_schema = {"source": str, "destination": str}
 
     def preflight(self, arguments: dict[str, Any]) -> str | None:
-        root = Path.cwd().resolve()
+        root = paths.workspace_root()
         source = (root / arguments["source"]).resolve()
         destination = (root / arguments["destination"]).resolve()
         if not source.is_file():
@@ -156,7 +157,7 @@ class MoveWorkspaceFileTool(Tool):
         return None
 
     def run(self, arguments: dict[str, Any]) -> str:
-        root = Path.cwd().resolve()
+        root = paths.workspace_root()
         source = (root / arguments["source"]).resolve()
         destination = (root / arguments["destination"]).resolve()
         if root not in source.parents or root not in destination.parents:

@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (
     QSizePolicy,
     QMenu,
     QTabWidget,
+    QFileDialog,
 )
 from PyQt6.QtCore import QEvent, QObject, QSettings, QThread, QTimer, Qt, QUrl, QPoint, QSize, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QColor, QBrush, QPainter, QPalette, QPen, QPixmap
@@ -34,7 +35,14 @@ import time
 from pathlib import Path
 
 from arqen.core.engine import ConversationEngine
-from arqen.config.settings import load_provider_config, save_provider_config, load_api_key
+from arqen.config.settings import (
+    load_provider_config,
+    save_provider_config,
+    load_api_key,
+    load_workspace_root,
+    save_workspace_root,
+)
+from arqen.config.paths import APP_ROOT, config_dir, data_dir, workspace_root
 from arqen.providers.config import ProviderConfig
 from arqen.providers.factory import create_provider
 from arqen.ui.theme import CyberpunkGreenTheme
@@ -402,7 +410,7 @@ class ArqenWindow(QMainWindow):
             | QDockWidget.DockWidgetFeature.DockWidgetFloatable
             | QDockWidget.DockWidgetFeature.DockWidgetClosable
         )
-        image_path = Path("data") / "generated" / "Arqen Desktop Voice_2.png"
+        image_path = data_dir() / "generated" / "Arqen Desktop Voice_2.png"
         visualization = VoiceVisualizationWidget(image_path)
         self.visualization_dock.setWidget(visualization)
         set_audio_level_callback(visualization.set_audio_level)
@@ -866,12 +874,14 @@ class ArqenWindow(QMainWindow):
         tabs = QTabWidget()
         profile_tab = QWidget()
         provider_tab = QWidget()
+        workspace_tab = QWidget()
         fallback_tab = QWidget()
         stats_tab = QWidget()
         profile_form = QFormLayout(profile_tab)
         provider_form = QFormLayout(provider_tab)
+        workspace_form = QFormLayout(workspace_tab)
         fallback_form = QFormLayout(fallback_tab)
-        for tab_form in (profile_form, provider_form, fallback_form):
+        for tab_form in (profile_form, provider_form, workspace_form, fallback_form):
             tab_form.setContentsMargins(10, 12, 10, 12)
             tab_form.setHorizontalSpacing(18)
             tab_form.setVerticalSpacing(12)
@@ -879,6 +889,7 @@ class ArqenWindow(QMainWindow):
         stats_layout.setContentsMargins(10, 12, 10, 12)
         tabs.addTab(profile_tab, "Profil")
         tabs.addTab(provider_tab, "Provider")
+        tabs.addTab(workspace_tab, "Arbetsyta")
         tabs.addTab(fallback_tab, "Fallback")
         tabs.addTab(stats_tab, "Statistik")
         dialog_layout.addWidget(tabs, 1)
@@ -969,6 +980,21 @@ class ArqenWindow(QMainWindow):
         )
         profile_form.addRow(apply_profile)
 
+        workspace = QLineEdit(str(load_workspace_root()))
+        workspace.setMinimumWidth(520)
+        workspace_form.addRow("Arbetskatalog", workspace)
+        browse = QPushButton("VÄLJ MAPP")
+        browse.setObjectName("secondaryButton")
+        browse.clicked.connect(lambda: self.choose_workspace(dialog, workspace))
+        workspace_form.addRow(browse)
+        workspace_hint = QLabel(
+            "Mappen Arqen läser och skriver filer i. Den påverkar bara verktygen — "
+            "inställningar, chattar och minne ligger kvar hos programmet självt "
+            f"({APP_ROOT}). Lämna den tom för att använda programmets egen mapp."
+        )
+        workspace_hint.setWordWrap(True)
+        workspace_form.addRow("Om", workspace_hint)
+
         refresh_models = QPushButton("HÄMTA MODELLER")
         refresh_models.setObjectName("secondaryButton")
         refresh_models.clicked.connect(lambda: self.load_local_models(model, base_url.text(), api_key.text(), provider.currentData()))
@@ -996,11 +1022,12 @@ class ArqenWindow(QMainWindow):
                 fallback_provider.currentData() or "",
                 fallback_timeout.text(),
                 profile.currentData(),
+                workspace.text(),
             )
         )
         actions_layout.addWidget(save)
         dialog_layout.addLayout(actions_layout)
-        for button in (stats_button, reset_stats, apply_profile, refresh_models, test_connection, save):
+        for button in (stats_button, reset_stats, apply_profile, refresh_models, test_connection, browse, save):
             button.setAutoDefault(False)
             button.setDefault(False)
         dialog.exec()
@@ -1080,7 +1107,12 @@ class ArqenWindow(QMainWindow):
             self.provider_metrics.reset()
             QMessageBox.information(self, "Providerstatistik", "Providerstatistiken är nollställd.")
 
-    def save_settings(self, dialog: QDialog, name: str, model: str, base_url: str, timeout: str, api_key: str, fallback_enabled: bool = False, fallback_provider: str = "", fallback_timeout: str = "10", profile_name: str = "") -> None:
+    def choose_workspace(self, dialog: QDialog, field: QLineEdit) -> None:
+        chosen = QFileDialog.getExistingDirectory(dialog, "Välj arbetskatalog", field.text() or str(APP_ROOT))
+        if chosen:
+            field.setText(str(Path(chosen)))
+
+    def save_settings(self, dialog: QDialog, name: str, model: str, base_url: str, timeout: str, api_key: str, fallback_enabled: bool = False, fallback_provider: str = "", fallback_timeout: str = "10", profile_name: str = "", workspace: str = "") -> None:
         try:
             config = ProviderConfig(
                 name=name,
@@ -1095,6 +1127,10 @@ class ArqenWindow(QMainWindow):
             )
             self.engine.provider = create_provider(config)
             save_provider_config(config)
+            chosen = workspace.strip()
+            if chosen and not Path(chosen).expanduser().is_dir():
+                raise ValueError(f"Arbetskatalogen finns inte: {chosen}")
+            save_workspace_root(chosen)
             self.provider_label = config.name
             self.profile_name = profile_name
             self.set_status(self.provider_status("READY // PROVIDER UPDATED"))
@@ -1148,7 +1184,7 @@ class ArqenWindow(QMainWindow):
         }
         url, model = defaults.get(provider, (base_url.text(), model_box.currentText()))
         try:
-            saved = json.loads((Path("config") / "arqen.json").read_text(encoding="utf-8"))
+            saved = json.loads((config_dir() / "arqen.json").read_text(encoding="utf-8"))
             profile = saved.get("providers", {}).get(provider, {})
             url = profile.get("base_url", url)
             model = profile.get("model", model)

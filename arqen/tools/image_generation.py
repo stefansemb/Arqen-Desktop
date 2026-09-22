@@ -6,6 +6,7 @@ from urllib.request import Request, urlopen
 
 from arqen.config.settings import load_api_key, load_provider_profile
 from arqen.tools.base import Tool
+from arqen.config.paths import data_dir
 
 
 class GenerateImageTool(Tool):
@@ -40,7 +41,7 @@ class GenerateImageTool(Tool):
                 last_error = str(exc)
         if not encoded:
             raise RuntimeError(last_error)
-        output = Path("data") / "generated"
+        output = data_dir() / "generated"
         output.mkdir(parents=True, exist_ok=True)
         path = output / f"arqen-image-{uuid.uuid4().hex[:8]}.png"
         path.write_bytes(base64.b64decode(encoded))

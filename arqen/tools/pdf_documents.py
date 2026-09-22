@@ -2,6 +2,7 @@ from pathlib import Path
 from typing import Any
 
 from arqen.tools.base import Tool
+from arqen.config import paths
 
 
 class ReadPdfTool(Tool):
@@ -11,7 +12,7 @@ class ReadPdfTool(Tool):
     arguments_schema = {"path": str}
 
     def run(self, arguments: dict[str, Any]) -> str:
-        root = Path.cwd().resolve()
+        root = paths.workspace_root()
         candidate = (root / arguments["path"]).resolve()
         if root not in candidate.parents or candidate.suffix.lower() != ".pdf":
             raise PermissionError("PDF path must be inside the Arqen workspace")

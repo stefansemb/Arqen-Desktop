@@ -2,13 +2,14 @@ import json
 import shutil
 import uuid
 from pathlib import Path
+from arqen.config.paths import data_dir
 
 
 class FileUndoStore:
     """Stores the previous state of files before a mutation."""
 
     def __init__(self, base_dir: Path | None = None) -> None:
-        self.base_dir = base_dir or Path("data") / "undo"
+        self.base_dir = base_dir or data_dir() / "undo"
         self.base_dir.mkdir(parents=True, exist_ok=True)
         self.index_path = self.base_dir / "last.json"
 

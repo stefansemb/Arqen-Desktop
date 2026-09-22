@@ -1,11 +1,12 @@
 from .core.engine import ConversationEngine
-from .config.settings import load_provider_config
+from .config.settings import load_provider_config, load_workspace_root
 from .providers.factory import create_provider
 from .tools.builtins import create_builtin_registry
 
 
 def main() -> None:
     try:
+        load_workspace_root()
         config = load_provider_config()
         provider = create_provider(config)
     except ValueError as exc:

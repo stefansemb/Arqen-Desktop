@@ -1,10 +1,11 @@
 import json
 from pathlib import Path
+from arqen.config.paths import data_dir
 
 
 class ProviderMetrics:
     def __init__(self, path: Path | None = None) -> None:
-        self.path = path or Path("data") / "provider_metrics.json"
+        self.path = path or data_dir() / "provider_metrics.json"
 
     def record(self, provider: str, model: str, elapsed_ms: float, success: bool, fallback: bool) -> None:
         data = self._load()

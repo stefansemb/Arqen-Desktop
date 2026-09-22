@@ -3,7 +3,7 @@ import sys
 from PyQt6.QtCore import QTimer
 from PyQt6.QtWidgets import QApplication
 
-from arqen.config.settings import load_provider_config
+from arqen.config.settings import load_provider_config, load_workspace_root
 from arqen.core.engine import ConversationEngine
 from arqen.providers.factory import create_provider
 from arqen.tools.builtins import create_builtin_registry
@@ -11,6 +11,7 @@ from arqen.ui.window import ArqenWindow
 
 
 def main() -> None:
+    load_workspace_root()
     config = load_provider_config()
     engine = ConversationEngine(
         provider=create_provider(config),

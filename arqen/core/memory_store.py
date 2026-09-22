@@ -1,10 +1,11 @@
 import json
 from pathlib import Path
+from arqen.config.paths import data_dir
 
 
 class MemoryStore:
     def __init__(self, path: Path | None = None) -> None:
-        self.path = path or Path("data") / "memory.json"
+        self.path = path or data_dir() / "memory.json"
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
     def list(self) -> list[str]:

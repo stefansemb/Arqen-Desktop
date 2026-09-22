@@ -3,6 +3,7 @@ import re
 from dataclasses import asdict
 from pathlib import Path
 
+from arqen.config.paths import APP_ROOT, config_dir, set_workspace_root
 from arqen.providers.config import ProviderConfig
 
 
@@ -10,7 +11,7 @@ DEFAULT_CONFIG = ProviderConfig()
 
 
 def load_api_key(provider_name: str) -> str:
-    secrets_path = Path("config") / "arqen-secrets.json"
+    secrets_path = config_dir() / "arqen-secrets.json"
     if not secrets_path.exists():
         return ""
     try:
@@ -21,7 +22,7 @@ def load_api_key(provider_name: str) -> str:
 
 
 def load_provider_config(path: Path | None = None) -> ProviderConfig:
-    config_path = path or Path("config") / "arqen.json"
+    config_path = path or config_dir() / "arqen.json"
     if not config_path.exists():
         return DEFAULT_CONFIG
     try:
@@ -33,7 +34,7 @@ def load_provider_config(path: Path | None = None) -> ProviderConfig:
     profiles = data.get("providers", {})
     if provider_name in profiles:
         provider = {**provider, **profiles[provider_name]}
-    secrets_path = Path("config") / "arqen-secrets.json"
+    secrets_path = config_dir() / "arqen-secrets.json"
     api_key = ""
     if secrets_path.exists():
         try:
@@ -57,7 +58,7 @@ def load_provider_config(path: Path | None = None) -> ProviderConfig:
 
 def load_provider_profile(provider_name: str, path: Path | None = None) -> ProviderConfig:
     """Load a saved provider profile, including its provider-specific key."""
-    config_path = path or Path("config") / "arqen.json"
+    config_path = path or config_dir() / "arqen.json"
     try:
         data = json.loads(config_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -76,7 +77,7 @@ def load_provider_profile(provider_name: str, path: Path | None = None) -> Provi
 
 
 def save_provider_config(config: ProviderConfig, path: Path | None = None) -> None:
-    config_path = path or Path("config") / "arqen.json"
+    config_path = path or config_dir() / "arqen.json"
     config_path.parent.mkdir(parents=True, exist_ok=True)
     profile = {key: value for key, value in asdict(config).items() if key != "api_key"}
     profile["model"] = re.sub(r"^\[[^\]]+\]\s*", "", str(profile["model"]))
@@ -89,13 +90,18 @@ def save_provider_config(config: ProviderConfig, path: Path | None = None) -> No
             "provider": config.fallback_provider,
             "timeout": config.fallback_timeout,
         },
+        "workspace": "",
     }
     if config_path.exists():
         try:
             old = json.loads(config_path.read_text(encoding="utf-8"))
             data["providers"] = old.get("providers", {})
             data["providers"][config.name] = profile
-            data["fallback"] = old.get("fallback", data["fallback"])
+            # The fallback block is whatever was just saved.  Keeping the old
+            # one froze it at its first value: it could be switched on once and
+            # never changed or switched off again from the dialog.
+            # Saving a provider must not reset which folder Arqen works in.
+            data["workspace"] = old.get("workspace", "")
         except (OSError, json.JSONDecodeError):
             pass
     config_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
@@ -109,3 +115,29 @@ def save_provider_config(config: ProviderConfig, path: Path | None = None) -> No
     providers = secrets.get("providers", {})
     providers[config.name] = config.api_key
     secrets_path.write_text(json.dumps({"providers": providers}, indent=2) + "\n", encoding="utf-8")
+
+
+def load_workspace_root(path: Path | None = None) -> Path:
+    """The folder the file tools work in, or the app root until one is chosen."""
+    config_path = path or config_dir() / "arqen.json"
+    try:
+        data = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return APP_ROOT
+    return set_workspace_root(str(data.get("workspace", "")).strip())
+
+
+def save_workspace_root(root: Path | str, path: Path | None = None) -> Path:
+    """Store the chosen workspace and apply it to the running tools."""
+    config_path = path or config_dir() / "arqen.json"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    applied = set_workspace_root(root)
+    data: dict = {}
+    if config_path.exists():
+        try:
+            data = json.loads(config_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            data = {}
+    data["workspace"] = "" if applied == APP_ROOT else str(applied)
+    config_path.write_text(json.dumps(data, indent=2) + '\n', encoding="utf-8")
+    return applied

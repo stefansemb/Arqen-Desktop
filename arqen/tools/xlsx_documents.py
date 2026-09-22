@@ -4,6 +4,7 @@ import zipfile
 import xml.etree.ElementTree as ET
 
 from arqen.tools.base import Tool
+from arqen.config import paths
 
 
 class ReadXlsxTool(Tool):
@@ -13,7 +14,7 @@ class ReadXlsxTool(Tool):
     arguments_schema = {"path": str}
 
     def run(self, arguments: dict[str, Any]) -> str:
-        root = Path.cwd().resolve()
+        root = paths.workspace_root()
         candidate = (root / arguments["path"]).resolve()
         if root not in candidate.parents or candidate.suffix.lower() != ".xlsx":
             raise PermissionError("XLSX path must be inside the Arqen workspace")
