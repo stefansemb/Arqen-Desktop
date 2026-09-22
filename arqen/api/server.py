@@ -1,4 +1,5 @@
 import json
+import os
 import shutil
 import subprocess
 from dataclasses import asdict, is_dataclass
@@ -147,10 +148,24 @@ class ArqenRequestHandler(BaseHTTPRequestHandler):
             ollama_status = "online" if ollama else "idle"
         except (OSError, subprocess.SubprocessError):
             ollama_status = "offline"
+        timer_status = "unknown"
+        last_health = "unknown"
+        try:
+            timer_status = subprocess.run(
+                ["systemctl", "is-active", "arqen-healthcheck.timer"],
+                capture_output=True, text=True, timeout=2,
+            ).stdout.strip() or "inactive"
+            last_health = subprocess.run(
+                ["journalctl", "-t", "arqen-health", "-n", "1", "--no-pager", "-o", "cat"],
+                capture_output=True, text=True, timeout=2,
+            ).stdout.strip() or "unknown"
+        except (OSError, subprocess.SubprocessError):
+            pass
         status = self._as_json(self.server.application.status())
         return {"api": "online", "model": status.get("model", ""), "ollama": ollama_status,
                 "memory_used": memory, "disk_used_percent": round(disk.used / disk.total * 100),
-                "sessions": len(self.server.application.list_sessions())}
+                "sessions": len(self.server.application.list_sessions()), "healthcheck": timer_status,
+                "last_health": last_health, "telegram": "configured" if os.path.exists("/etc/arqen-telegram.env") else "not configured"}
 
     def _send_json(self, status: HTTPStatus, body: dict[str, Any]) -> None:
         encoded = json.dumps(body, ensure_ascii=False).encode("utf-8")
@@ -243,4 +258,4 @@ CONTROL_PAGE = r"""<!doctype html><html lang="sv"><head>
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Arqen Control</title>
 <style>*{box-sizing:border-box}body{margin:0;background:#101214;color:#e9eee8;font:16px system-ui,sans-serif}main{max-width:980px;margin:auto;padding:28px 18px}h1{color:#b7ff18;letter-spacing:.1em}input,button{padding:12px;border:1px solid #343b37;border-radius:8px;background:#1d2220;color:#fff;font:inherit}input{width:70%}button{background:#b7ff18;color:#101214;font-weight:700;cursor:pointer}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px;margin-top:22px}.card{background:#191d1b;border:1px solid #303832;border-radius:12px;padding:18px}.label{color:#89958c;font-size:.85rem}.value{font-size:1.35rem;margin-top:7px;color:#b7ff18}#message{margin-top:18px;color:#aab5ad}</style></head>
 <body><main><h1>ARQEN CONTROL</h1><p>VPS-status och driftöversikt</p><input id="token" type="password" placeholder="API-token"><button onclick="loadStatus()">ANSLUT</button><div id="message">Ange token för att läsa status.</div><section class="grid" id="grid"></section></main>
-<script>async function loadStatus(){const token=document.getElementById('token').value;try{const r=await fetch('/api/v1/control/status',{headers:{Authorization:'Bearer '+token}});const j=await r.json();if(!r.ok)throw Error(j.error?.message||'Fel');const d=j.data;const rows=[['API',d.api],['Ollama',d.ollama],['Modell',d.model],['RAM använd',d.memory_used],['Disk',d.disk_used_percent+'%'],['Sessioner',d.sessions]];document.getElementById('grid').innerHTML=rows.map(x=>'<div class="card"><div class="label">'+x[0]+'</div><div class="value">'+x[1]+'</div></div>').join('');document.getElementById('message').textContent='Senast uppdaterad: '+new Date().toLocaleTimeString()}catch(e){document.getElementById('message').textContent=e.message}}</script></body></html>"""
+<script>async function loadStatus(){const token=document.getElementById('token').value;try{const r=await fetch('/api/v1/control/status',{headers:{Authorization:'Bearer '+token}});const j=await r.json();if(!r.ok)throw Error(j.error?.message||'Fel');const d=j.data;const rows=[['API',d.api],['Ollama',d.ollama],['Modell',d.model],['RAM använd',d.memory_used],['Disk',d.disk_used_percent+'%'],['Sessioner',d.sessions],['Healthcheck',d.healthcheck],['Telegram',d.telegram],['Senaste kontroll',d.last_health]];document.getElementById('grid').innerHTML=rows.map(x=>'<div class="card"><div class="label">'+x[0]+'</div><div class="value">'+x[1]+'</div></div>').join('');document.getElementById('message').textContent='Senast uppdaterad: '+new Date().toLocaleTimeString()}catch(e){document.getElementById('message').textContent=e.message}}</script></body></html>"""
