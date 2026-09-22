@@ -48,6 +48,7 @@ class OpenAICompatibleProvider(AIProvider):
             payload["tool_choice"] = "auto"
         if stream:
             payload["stream"] = True
+            payload["stream_options"] = {"include_usage": True}
         return Request(
             f"{self.base_url}/chat/completions",
             data=json.dumps(payload).encode("utf-8"),
@@ -73,7 +74,7 @@ class OpenAICompatibleProvider(AIProvider):
         message = choices[0].get("message", {})
         if not isinstance(message, dict):
             raise RuntimeError(f"{self.provider_name} provider returned an unreadable message")
-        return self._build(message.get("content") or "", message.get("tool_calls") or [])
+        return self._build(message.get("content") or "", message.get("tool_calls") or [], data.get("usage"))
 
     def respond_stream(
         self,
@@ -84,6 +85,7 @@ class OpenAICompatibleProvider(AIProvider):
     ) -> ProviderResponse:
         parts: list[str] = []
         calls: dict[int, dict[str, Any]] = {}
+        usage: dict[str, Any] | None = None
         try:
             with urlopen(self._request(messages, tools, stream=True), timeout=self.timeout) as response:
                 for raw_line in response:
@@ -99,7 +101,12 @@ class OpenAICompatibleProvider(AIProvider):
                         event = json.loads(data)
                     except json.JSONDecodeError:
                         continue
-                    delta = event.get("choices", [{}])[0].get("delta", {})
+                    if event.get("usage"):
+                        # Arrives in a trailing chunk of its own, after the
+                        # content is done and often with no choices at all.
+                        usage = event["usage"]
+                    choices = event.get("choices") or [{}]
+                    delta = choices[0].get("delta", {})
                     if not isinstance(delta, dict):
                         continue
                     text = delta.get("content")
@@ -113,8 +120,8 @@ class OpenAICompatibleProvider(AIProvider):
             raise self._fail(exc) from exc
         ordered = [calls[index] for index in sorted(calls)]
         if should_cancel is not None and should_cancel():
-            return ProviderResponse(content="".join(parts).strip())
-        return self._build("".join(parts), ordered)
+            return ProviderResponse(content="".join(parts).strip(), usage=usage)
+        return self._build("".join(parts), ordered, usage)
 
     @staticmethod
     def _merge_call(calls: dict[int, dict[str, Any]], fragment: dict[str, Any]) -> None:
@@ -134,7 +141,7 @@ class OpenAICompatibleProvider(AIProvider):
             if function.get("arguments"):
                 call["function"]["arguments"] += function["arguments"]
 
-    def _build(self, content: str, raw_calls: list[dict[str, Any]]) -> ProviderResponse:
+    def _build(self, content: str, raw_calls: list[dict[str, Any]], usage: dict[str, Any] | None = None) -> ProviderResponse:
         content = str(content).strip()
         request = None
         for call in raw_calls:
@@ -158,7 +165,7 @@ class OpenAICompatibleProvider(AIProvider):
             break
         if not content and request is None:
             raise RuntimeError(f"{self.provider_name} provider returned an empty response")
-        return ProviderResponse(content=content, tool_request=request, tool_calls=tuple(raw_calls))
+        return ProviderResponse(content=content, tool_request=request, tool_calls=tuple(raw_calls), usage=usage)
 
 
 class GeminiProvider(AIProvider):

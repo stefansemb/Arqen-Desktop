@@ -26,6 +26,9 @@ def test_settings_survive_being_started_from_another_directory(tmp_path, monkeyp
 
 
 def test_config_and_data_follow_the_installation_not_the_cwd(tmp_path, monkeypatch) -> None:
+    # conftest redirects data_dir so tests stay out of the real app data.
+    # This one is about the production behaviour, so it drops that first.
+    monkeypatch.undo()
     monkeypatch.chdir(tmp_path)
     assert paths.config_dir() == APP_ROOT / "config"
     assert paths.data_dir() == APP_ROOT / "data"

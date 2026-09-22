@@ -243,6 +243,87 @@ class VoiceVisualizationWidget(QLabel):
             self.setPixmap(self._pixmap.scaled(self.size(), Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation))
 
 
+
+class StatsPanelWidget(QWidget):
+    """Tokens and cost for the session, and for everything recorded so far."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 12, 14, 12)
+        layout.setSpacing(6)
+        self._rows: dict[str, QLabel] = {}
+        self._heading(layout, "DEN HÄR SESSIONEN")
+        for key, label in (("session_tokens", "Tokens"), ("session_split", "In / ut"), ("session_cost", "Kostnad")):
+            self._row(layout, key, label)
+        layout.addSpacing(8)
+        self._heading(layout, "TOTALT")
+        for key, label in (("total_tokens", "Tokens"), ("total_cost", "Kostnad")):
+            self._row(layout, key, label)
+        layout.addSpacing(8)
+        self._heading(layout, "SENASTE SVARET")
+        for key, label in (("last_turn", "Tokens"), ("last_cost", "Kostnad"), ("last_ms", "Tid")):
+            self._row(layout, key, label)
+        layout.addStretch(1)
+        self.setStyleSheet(
+            f"background-color: {CyberpunkGreenTheme.panel}; "
+            f"color: {CyberpunkGreenTheme.text};"
+        )
+        self.update_usage(None, None, None, None)
+
+    def _heading(self, layout: QVBoxLayout, text: str) -> None:
+        label = QLabel(text)
+        label.setStyleSheet(
+            f"color: {CyberpunkGreenTheme.accent}; letter-spacing: 2px; font-size: 10px;"
+        )
+        layout.addWidget(label)
+
+    def _row(self, layout: QVBoxLayout, key: str, caption: str) -> None:
+        line = QHBoxLayout()
+        name = QLabel(caption)
+        name.setStyleSheet(f"color: {CyberpunkGreenTheme.muted}; font-size: 11px;")
+        value = QLabel("—")
+        value.setStyleSheet(
+            f"color: {CyberpunkGreenTheme.text}; font-family: Consolas, monospace; font-size: 12px;"
+        )
+        value.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        line.addWidget(name)
+        line.addStretch(1)
+        line.addWidget(value)
+        layout.addLayout(line)
+        self._rows[key] = value
+
+    @staticmethod
+    def _money(amount: float) -> str:
+        """Small amounts need more decimals than a price tag does."""
+        if amount <= 0:
+            return "$0.00"
+        if amount < 0.01:
+            return f"${amount:.5f}"
+        return f"${amount:.2f}"
+
+    @staticmethod
+    def _count(value: int) -> str:
+        return f"{value:,}".replace(",", " ")
+
+    def update_usage(self, session, total, turn, elapsed_ms) -> None:
+        if session is None:
+            for value in self._rows.values():
+                value.setText("—")
+            return
+        self._rows["session_tokens"].setText(self._count(session.total_tokens))
+        self._rows["session_split"].setText(
+            f"{self._count(session.prompt_tokens)} / {self._count(session.completion_tokens)}"
+        )
+        self._rows["session_cost"].setText(self._money(session.cost))
+        self._rows["total_tokens"].setText(self._count(total.total_tokens))
+        self._rows["total_cost"].setText(self._money(total.cost))
+        if turn is not None:
+            self._rows["last_turn"].setText(self._count(turn.total_tokens))
+            self._rows["last_cost"].setText(self._money(turn.cost))
+        self._rows["last_ms"].setText("—" if elapsed_ms is None else f"{elapsed_ms / 1000:.1f} s")
+
+
 class ArqenWindow(QMainWindow):
     microphone_status = pyqtSignal(str)
     microphone_result = pyqtSignal(str)
@@ -378,6 +459,8 @@ class ArqenWindow(QMainWindow):
         self.last_response_ms: float | None = None
         self.fallback_count = 0
         self.provider_metrics = ProviderMetrics()
+        self._create_stats_dock()
+        self._restore_window_geometry()
         self._loading_phase = 0
         self._loading_timer = QTimer(self)
         self._loading_timer.setInterval(350)
@@ -419,19 +502,98 @@ class ArqenWindow(QMainWindow):
         self.visualization_dock.resize(400, 320)
         self.visualization_dock.setFloating(True)
         self.visualization_dock.installEventFilter(self)
-        saved_geometry = QSettings("Arqen", "Arqen Desktop").value("voice_visualization_geometry")
-        if saved_geometry:
-            self.visualization_dock.restoreGeometry(saved_geometry)
+        self._apply_placement("voice_visualization", self.visualization_dock, 300, 240)
+
+    def _create_stats_dock(self) -> None:
+        self.stats_dock = QDockWidget("ARQEN STATS", self)
+        self.stats_dock.setObjectName("statsDock")
+        self.stats_dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
+        self.stats_dock.setFeatures(
+            QDockWidget.DockWidgetFeature.DockWidgetMovable
+            | QDockWidget.DockWidgetFeature.DockWidgetFloatable
+            | QDockWidget.DockWidgetFeature.DockWidgetClosable
+        )
+        self.stats_panel = StatsPanelWidget()
+        self.stats_dock.setWidget(self.stats_panel)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.stats_dock)
+        self.stats_dock.setMinimumSize(240, 300)
+        self.stats_dock.resize(280, 340)
+        self.stats_dock.setFloating(True)
+        self.stats_dock.installEventFilter(self)
+        self._apply_placement("stats_panel", self.stats_dock, 240, 300)
+        self.refresh_stats_panel()
+
+    def refresh_stats_panel(self) -> None:
+        panel = getattr(self, "stats_panel", None)
+        if panel is None:
+            return
+        panel.update_usage(
+            self.engine.session_usage,
+            self.provider_metrics.totals(),
+            self.engine.turn_usage,
+            self.last_response_ms,
+        )
+
+    @staticmethod
+    def _on_a_connected_screen(x: int, y: int) -> bool:
+        from PyQt6.QtWidgets import QApplication
+
+        return any(screen.geometry().contains(x, y) for screen in QApplication.screens())
+
+    def _store_placement(self, key: str, widget) -> None:
+        settings = QSettings("Arqen", "Arqen Desktop")
+        settings.setValue(f"{key}_position", [widget.pos().x(), widget.pos().y()])
+        settings.setValue(f"{key}_size", [widget.width(), widget.height()])
+
+    def _apply_placement(self, key: str, widget, min_width: int, min_height: int) -> bool:
+        """Put ``widget`` back where it was, or leave it to Qt.
+
+        Position and size are stored plainly rather than through
+        ``saveGeometry``: that format also carries the screen layout and frame
+        margins it was recorded with, and reconciling those on restore moved
+        the window every time.  A position on a monitor that is no longer
+        attached is ignored, so nothing ends up stranded off the desktop.
+        """
+        settings = QSettings("Arqen", "Arqen Desktop")
+        position = settings.value(f"{key}_position")
+        size = settings.value(f"{key}_size")
+        if position is None or size is None:
+            return False
+        try:
+            x, y = (int(value) for value in position)
+            width, height = (int(value) for value in size)
+        except (TypeError, ValueError):
+            return False
+        if width < min_width or height < min_height or not self._on_a_connected_screen(x, y):
+            return False
+        widget.resize(width, height)
+        widget.move(x, y)
+        return True
+
+    def _restore_window_geometry(self) -> None:
+        """Open on the screen the window was last closed on, not wherever Windows puts it."""
+        self.geometry_restored = self._apply_placement("main_window", self, 400, 300)
+
+    def closeEvent(self, event) -> None:
+        self._store_placement("main_window", self)
+        for attribute, key in self._DOCK_GEOMETRY_KEYS.items():
+            dock = getattr(self, attribute, None)
+            if dock is not None and dock.isFloating():
+                self._store_placement(key, dock)
+        super().closeEvent(event)
+
+    _DOCK_GEOMETRY_KEYS = {
+        "visualization_dock": "voice_visualization",
+        "stats_dock": "stats_panel",
+    }
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
-        if watched is getattr(self, "visualization_dock", None) and event.type() in {
-            QEvent.Type.Move,
-            QEvent.Type.Resize,
-        }:
-            QSettings("Arqen", "Arqen Desktop").setValue(
-                "voice_visualization_geometry",
-                self.visualization_dock.saveGeometry(),
-            )
+        if event.type() in {QEvent.Type.Move, QEvent.Type.Resize}:
+            for attribute, key in self._DOCK_GEOMETRY_KEYS.items():
+                dock = getattr(self, attribute, None)
+                if watched is dock and dock.isFloating():
+                    self._store_placement(key, dock)
+                    break
         return super().eventFilter(watched, event)
 
     def send_message(self) -> None:
@@ -522,7 +684,9 @@ class ArqenWindow(QMainWindow):
         active_provider = getattr(self.engine.provider, "provider_name", self.provider_label)
         active_model = getattr(self.engine.provider, "model", "")
         fallback_used = getattr(self.engine.provider, "fallback_used", False)
-        self.provider_metrics.record(active_provider, active_model, elapsed_ms, True, fallback_used)
+        self.provider_metrics.record(
+            active_provider, active_model, elapsed_ms, True, fallback_used, self.engine.turn_usage
+        )
         if fallback_used:
             self.fallback_count += 1
         if not self._streaming_displayed:
@@ -540,6 +704,7 @@ class ArqenWindow(QMainWindow):
             ).start()
             QTimer.singleShot(250, self._refresh_speech_stop_state)
         self.set_status(self.provider_status("READY // RESPONSE COMPLETE", elapsed_ms))
+        self.refresh_stats_panel()
         self.refresh_sessions()
 
     def _end_streaming_block(self) -> None:
@@ -591,8 +756,10 @@ class ArqenWindow(QMainWindow):
             0.0,
             False,
             getattr(self.engine.provider, "fallback_used", False),
+            self.engine.turn_usage,
         )
         self.append_message("FEL", message, CyberpunkGreenTheme.danger)
+        self.refresh_stats_panel()
         self.set_status(self.provider_status("ERROR // REQUEST FAILED"))
 
     def response_cancelled(self) -> None:
@@ -849,6 +1016,7 @@ class ArqenWindow(QMainWindow):
         # The model's closing words rarely repeat the tool's own output, so the
         # image path is taken from the tool result rather than from the reply.
         self.show_generated_image(self.engine.last_tool_output or result)
+        self.refresh_stats_panel()
         self.set_status("READY // CONFIRMATION RESOLVED")
 
     def show_generated_image(self, result: str) -> None:

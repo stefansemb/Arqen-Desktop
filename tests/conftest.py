@@ -16,9 +16,12 @@ def sandbox_the_workspace(monkeypatch, tmp_path):
     working directory, so the tools have to be pointed at the test's
     directory explicitly or they would reach past it into the checkout.
 
-    The undo store is a module-level singleton anchored to the app's own
-    data directory, which is shared with the running app -- a test must not
-    overwrite the undo history of whoever is using Arqen.
+    The app's data directory is redirected too.  Sessions, memory, metrics
+    and undo snapshots all live there, and it belongs to whoever is using
+    Arqen: a test run must not leave its prompts sitting in their chat list.
+    The undo store is a module-level singleton built at import time, before
+    any of this can take effect, so it is replaced outright.
     """
     monkeypatch.setattr(paths, "workspace_root", lambda: Path.cwd().resolve())
+    monkeypatch.setattr(paths, "data_dir", lambda: tmp_path / "appdata")
     monkeypatch.setattr(workspace_files, "UNDO", FileUndoStore(tmp_path / "undo"))

@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from arqen.core.contracts import Message
-from arqen.config.paths import data_dir
+from arqen.config import paths
 
 
 @dataclass
@@ -20,7 +20,7 @@ class ChatSession:
 
 class SessionStore:
     def __init__(self, base_dir: Path | None = None) -> None:
-        self.base_dir = base_dir or data_dir() / "sessions"
+        self.base_dir = base_dir or paths.data_dir() / "sessions"
         self.base_dir.mkdir(parents=True, exist_ok=True)
 
     def create(self, title: str = "Ny chatt") -> ChatSession:

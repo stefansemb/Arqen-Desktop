@@ -1,6 +1,6 @@
 import re
 
-from arqen.core.contracts import Message, ToolRequest
+from arqen.core.contracts import Message, ToolRequest, Usage
 from arqen.core.tool_protocol import parse_tool_request
 from arqen.providers.base import AIProvider
 from arqen.tools.executor import ToolExecutor
@@ -50,6 +50,11 @@ class ConversationEngine:
         self.memory_store = memory_store or MemoryStore()
         self.session = self.session_store.create()
         self.last_tool_output = ""
+        # What the current turn has cost so far, and the running total for
+        # the whole session.  A turn with tools spans several calls, so the
+        # per-turn figure only means anything once it is summed.
+        self.turn_usage = Usage()
+        self.session_usage = Usage()
         self.messages: list[Message] = []
         self.voice_enabled = False
         self.last_response_speakable = False
@@ -93,6 +98,7 @@ class ConversationEngine:
 
     def respond(self, prompt: str) -> str:
         self.last_response_speakable = False
+        self.turn_usage = Usage()
         voice_command = prompt.strip().casefold()
         if voice_command in {"röstläge på", "rostläge på", "voice mode on"}:
             self.voice_enabled = True
@@ -213,12 +219,17 @@ class ConversationEngine:
 
     def _call_provider(self, tools: list[dict] | None):
         if hasattr(self.provider, "respond_stream"):
-            return self.provider.respond_stream(
+            response = self.provider.respond_stream(
                 self.messages, self.on_partial_response, self._cancelled, tools
             )
-        if tools:
-            return self.provider.respond(self.messages, tools)
-        return self.provider.respond(self.messages)
+        elif tools:
+            response = self.provider.respond(self.messages, tools)
+        else:
+            response = self.provider.respond(self.messages)
+        reported = getattr(response, "usage", None)
+        self.turn_usage.add(reported)
+        self.session_usage.add(reported)
+        return response
 
     def _save_session(self) -> None:
         self.session.messages = list(self.messages)

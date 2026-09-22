@@ -21,6 +21,8 @@ def main() -> None:
     window = ArqenWindow(engine, provider_label=config.name, profile_name=config.profile_name)
     window.show()
     def center_window() -> None:
+        if getattr(window, "geometry_restored", False):
+            return
         screen = window.screen() or app.primaryScreen()
         if screen is not None:
             area = screen.availableGeometry()
