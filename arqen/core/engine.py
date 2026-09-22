@@ -56,20 +56,32 @@ class ConversationEngine:
     def _ensure_system_context(self) -> None:
         if self.messages:
             return
-        tool_description = self.tools.prompt_description()
         memories = self.memory_store.list()
         memory_context = "\n".join(f"- {item}" for item in memories) or "none"
+        if getattr(self.provider, "supports_tools", False):
+            # The tools are attached to the request itself, so describing an
+            # envelope here only competes with the native calling convention
+            # and invites the model to narrate the call instead of making it.
+            tool_rules = (
+                "Call a tool whenever one can do what the user asked. "
+                "Do not describe or announce a call you have not made: perform it. "
+                "Keep calling tools until the task is finished, then answer."
+            )
+            tool_catalogue = ""
+        else:
+            tool_rules = "Request a tool only with the exact JSON tool_call envelope."
+            tool_catalogue = f"\n\nAvailable tools:\n{self.tools.prompt_description() or 'none'}"
         self.messages.append(
             Message(
                 role="system",
                 content=(
                     "You are Arqen Desktop. Use normal text for conversation. "
                     "Answer in Swedish by default unless the user asks for another language. "
-                    "Request a tool only with the exact JSON tool_call envelope. "
+                    f"{tool_rules} "
                     "Never claim a tool ran unless a tool result is provided. "
                     "Never claim to remember a person, fact, or note unless it appears in User-approved memory. "
-                    "Do not invent memory entries or say that notes were saved without an explicit memory command.\n\n"
-                    f"Available tools:\n{tool_description or 'none'}"
+                    "Do not invent memory entries or say that notes were saved without an explicit memory command."
+                    f"{tool_catalogue}"
                     f"\n\nUser-approved memory:\n{memory_context}"
                 ),
             )
