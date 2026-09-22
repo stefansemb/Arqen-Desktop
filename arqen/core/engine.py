@@ -36,7 +36,7 @@ class ConversationEngine:
         session_store: SessionStore | None = None,
         memory_store: MemoryStore | None = None,
         should_cancel: Callable[[], bool] | None = None,
-        max_tool_steps: int = 8,
+        max_tool_steps: int = 16,
     ) -> None:
         self.provider = provider
         self.tools = tools or ToolRegistry()
@@ -49,6 +49,7 @@ class ConversationEngine:
         self.session_store = session_store or SessionStore()
         self.memory_store = memory_store or MemoryStore()
         self.session = self.session_store.create()
+        self.last_tool_output = ""
         self.messages: list[Message] = []
         self.voice_enabled = False
         self.last_response_speakable = False
@@ -79,6 +80,9 @@ class ConversationEngine:
                     "Answer in Swedish by default unless the user asks for another language. "
                     f"{tool_rules} "
                     "Never claim a tool ran unless a tool result is provided. "
+                    "Never repeat a file's contents in your reply after a tool has read or "
+                    "written it: the user already has the file, so say what you did and what "
+                    "is in it instead of quoting it back. "
                     "Never claim to remember a person, fact, or note unless it appears in User-approved memory. "
                     "Do not invent memory entries or say that notes were saved without an explicit memory command."
                     f"{tool_catalogue}"
@@ -184,7 +188,28 @@ class ConversationEngine:
         self._save_session()
         if self._cancelled():
             return last_content or "Avbrutet."
-        return last_content or "Jag kom inte vidare."
+        return self._wrap_up(last_content)
+
+    def _wrap_up(self, last_content: str) -> str:
+        """Close a turn that used up its tool budget.
+
+        ``last_content`` is whatever the final step produced, which is usually
+        raw tool output.  Handing that to the user as an answer reads as if
+        Arqen had pasted a file, so the model is asked once more without tools
+        and has to reply in words.
+        """
+        if not getattr(self.provider, "supports_tools", False):
+            return last_content or "Jag kom inte vidare."
+        try:
+            response = self._call_provider(None)
+        except Exception:
+            return last_content or "Jag kom inte vidare."
+        if self._cancelled():
+            return response.content or last_content or "Avbrutet."
+        self.messages.append(Message(role="assistant", content=response.content))
+        self.last_response_speakable = self.voice_enabled
+        self._save_session()
+        return response.content
 
     def _call_provider(self, tools: list[dict] | None):
         if hasattr(self.provider, "respond_stream"):
@@ -502,7 +527,18 @@ class ConversationEngine:
         return None
 
     def confirm_pending_tool(self, accepted: bool) -> str:
+        """Run the tool the user just approved and let the model carry on.
+
+        The approval arrives after the turn already returned, so the result is
+        appended without a call id: the matching id was spent on the message
+        that asked for confirmation.  Providers that read tool results get the
+        loop back and can finish the task; the others have nothing to do with
+        the output beyond showing it.
+        """
         result = self.executor.confirm_pending(accepted)
         self.messages.append(Message(role="tool", content=result.output))
-        self._save_session()
-        return result.output
+        self.last_tool_output = result.output
+        if not accepted or not getattr(self.provider, "supports_tools", False):
+            self._save_session()
+            return result.output
+        return self._run_tool_loop("")

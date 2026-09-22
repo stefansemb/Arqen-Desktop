@@ -108,6 +108,9 @@ class ResponseWorker(QObject):
 class ConfirmationWorker(QObject):
     finished = pyqtSignal(str)
     failed = pyqtSignal(str)
+    tool_requested = pyqtSignal(str)
+    confirmation_required = pyqtSignal(str, object)
+    partial = pyqtSignal(str)
 
     def __init__(self, engine: ConversationEngine) -> None:
         super().__init__()
@@ -116,6 +119,14 @@ class ConfirmationWorker(QObject):
     @pyqtSlot()
     def run(self) -> None:
         try:
+            # An approved tool hands the turn back to the model, so the engine
+            # callbacks have to point at this worker.  Left pointing at the
+            # finished ResponseWorker they would emit from a deleted object.
+            self.engine.on_tool_request = lambda name: self.tool_requested.emit(name)
+            self.engine.on_partial_response = lambda text: self.partial.emit(text)
+            self.engine.on_confirmation_required = (
+                lambda name, arguments: self.confirmation_required.emit(name, arguments)
+            )
             self.finished.emit(self.engine.confirm_pending_tool(True))
         except Exception as exc:
             self.failed.emit(str(exc))
@@ -523,6 +534,16 @@ class ArqenWindow(QMainWindow):
         self.set_status(self.provider_status("READY // RESPONSE COMPLETE", elapsed_ms))
         self.refresh_sessions()
 
+    def _end_streaming_block(self) -> None:
+        """Close the current ARQEN block so the next chunk starts a new one.
+
+        A tool call splits one turn into several streamed passages.  Without
+        this the text that follows the tool is inserted at the end of the
+        document, which is the TOOL line itself.
+        """
+        self._streaming_displayed = False
+        self._stream_candidate = ""
+
     def show_partial_response(self, text: str) -> None:
         if getattr(self, "_cancel_requested", False):
             return
@@ -591,6 +612,9 @@ class ArqenWindow(QMainWindow):
         try:
             thread = getattr(self, "thread", None)
             running = thread is not None and thread.isRunning()
+            confirm_thread = getattr(self, "confirm_thread", None)
+            if not running and confirm_thread is not None:
+                thread, running = confirm_thread, confirm_thread.isRunning()
             if running:
                 # The flag stops the provider's stream loop and the engine's
                 # tool loop; requestInterruption is kept for the worker's own
@@ -638,6 +662,7 @@ class ArqenWindow(QMainWindow):
 
     def show_tool_request(self, name: str) -> None:
         self.set_status(f"TOOL // {name.upper()}")
+        self._end_streaming_block()
         self.append_message("TOOL", name, CyberpunkGreenTheme.muted)
 
     def append_message(self, sender: str, content: str, color: str) -> None:
@@ -773,6 +798,7 @@ class ArqenWindow(QMainWindow):
             details = " | " + ", ".join(
                 f"{key}: {str(value)[:160]}" for key, value in arguments.items()
             )
+        self._end_streaming_block()
         self.append_message("CONFIRM", f"{name}{details}", CyberpunkGreenTheme.accent)
         self.confirm_button.setVisible(True)
         self.cancel_button.setVisible(True)
@@ -788,12 +814,19 @@ class ArqenWindow(QMainWindow):
             self.set_status("READY // CONFIRMATION CANCELLED")
             return
         self.set_status(self.provider_status("WORKING // RUNNING CONFIRMED TOOL"))
+        self._end_streaming_block()
+        self._cancel_requested = False
+        self.engine.should_cancel = lambda: self._cancel_requested
+        self.stop_button.setEnabled(True)
         self.confirm_thread = QThread(self)
         self.confirm_worker = ConfirmationWorker(self.engine)
         self.confirm_worker.moveToThread(self.confirm_thread)
         self.confirm_thread.started.connect(self.confirm_worker.run)
         self.confirm_worker.finished.connect(self.confirmation_finished)
         self.confirm_worker.failed.connect(self.confirmation_failed)
+        self.confirm_worker.tool_requested.connect(self.show_tool_request)
+        self.confirm_worker.confirmation_required.connect(self.show_confirmation)
+        self.confirm_worker.partial.connect(self.show_partial_response)
         self.confirm_worker.finished.connect(self.confirm_thread.quit)
         self.confirm_worker.failed.connect(self.confirm_thread.quit)
         self.confirm_thread.finished.connect(self.confirm_worker.deleteLater)
@@ -801,8 +834,13 @@ class ArqenWindow(QMainWindow):
         self.confirm_thread.start()
 
     def confirmation_finished(self, result: str) -> None:
-        self.output.append(f"<b>ARQEN:</b> {result}")
-        self.show_generated_image(result)
+        if not self._streaming_displayed:
+            self.output.append(f"<b>ARQEN:</b> {result}")
+        self._end_streaming_block()
+        self.stop_button.setEnabled(False)
+        # The model's closing words rarely repeat the tool's own output, so the
+        # image path is taken from the tool result rather than from the reply.
+        self.show_generated_image(self.engine.last_tool_output or result)
         self.set_status("READY // CONFIRMATION RESOLVED")
 
     def show_generated_image(self, result: str) -> None:
