@@ -430,7 +430,7 @@ class ArqenWindow(QMainWindow):
         )
         header_layout.addWidget(self.status)
 
-        background_path = str(Path(__file__).resolve().parents[2] / "data" / "generated" / "Arqen Chat Background.png")
+        background_path = str(data_dir() / "generated" / "Arqen Chat Background.png")
         self.output = ChatBackgroundTextEdit(background_path)
         self.output.setPlaceholderText("")
         self.output.setStyleSheet(
