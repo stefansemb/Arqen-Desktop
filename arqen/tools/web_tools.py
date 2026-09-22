@@ -57,6 +57,7 @@ KNOWN_DOMAIN_CORRECTIONS = {
     "samita.tv": "samida.dev",
     "samydators.com": "samidatools.com",
     "samydatools.com": "samidatools.com",
+    "samlidatools.com": "samidatools.com",
 }
 
 
