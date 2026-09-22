@@ -1,5 +1,6 @@
 import sys
 
+from PyQt6.QtCore import QTimer
 from PyQt6.QtWidgets import QApplication
 
 from arqen.config.settings import load_provider_config
@@ -17,10 +18,12 @@ def main() -> None:
     )
     app = QApplication(sys.argv)
     window = ArqenWindow(engine, provider_label=config.name, profile_name=config.profile_name)
-    screen = app.primaryScreen()
-    if screen is not None:
-        window.move(screen.availableGeometry().center() - window.rect().center())
     window.show()
+    def center_window() -> None:
+        screen = window.screen() or app.primaryScreen()
+        if screen is not None:
+            window.move(screen.availableGeometry().center() - window.frameGeometry().center())
+    QTimer.singleShot(0, center_window)
     sys.exit(app.exec())
 
 
