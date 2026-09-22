@@ -19,6 +19,11 @@ if [ "${disk_use:-0}" -ge 85 ]; then
     failures+=("disk-${disk_use}%")
 fi
 
+latest_backup=$(find /var/backups/arqen -type f -name 'arqen-*.tar.gz' -printf '%T@\n' 2>/dev/null | sort -nr | head -n 1)
+if [ -z "$latest_backup" ] || [ "$(awk -v now="$(date +%s)" -v backup="$latest_backup" 'BEGIN { print (now-backup > 90000) ? 1 : 0 }')" -eq 1 ]; then
+    failures+=("backup-stale")
+fi
+
 if [ "${#failures[@]}" -gt 0 ]; then
     status="FAIL: ${failures[*]}"
     logger -t arqen-health "$status"
