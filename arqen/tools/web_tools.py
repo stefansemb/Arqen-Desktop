@@ -50,6 +50,24 @@ def _safe_url(url: str) -> str:
     ))
 
 
+KNOWN_DOMAIN_CORRECTIONS = {
+    "samrida.dev": "samida.dev",
+    "semrida.dev": "samida.dev",
+}
+
+
+def _normalize_known_domain(url: str) -> str:
+    value = url.strip()
+    prefix = ""
+    if not value.startswith(("http://", "https://")):
+        prefix, value = "https://", value
+    parsed = urlparse(value)
+    corrected = KNOWN_DOMAIN_CORRECTIONS.get(parsed.netloc.casefold(), parsed.netloc)
+    if corrected != parsed.netloc:
+        value = urlunparse((parsed.scheme, corrected, parsed.path, parsed.params, parsed.query, parsed.fragment))
+    return prefix + value if prefix else value
+
+
 class FetchWebpageTool(Tool):
     name = "fetch_webpage"
     description = "Fetches the title and readable text from a public web page."
@@ -77,8 +95,13 @@ class FetchWebpageTool(Tool):
 class OpenWebpageTool(Tool):
     name = "open_webpage"
     description = "Opens a public URL in the computer's default web browser."
-    requires_confirmation = False
+    requires_confirmation = True
     arguments_schema = {"url": str}
+
+    def normalize_arguments(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        normalized = dict(arguments)
+        normalized["url"] = _normalize_known_domain(str(normalized.get("url", "")))
+        return normalized
 
     def run(self, arguments: dict[str, Any]) -> str:
         url = arguments["url"].strip()

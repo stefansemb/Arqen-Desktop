@@ -20,6 +20,7 @@ class ToolExecutor:
         tool = self.registry.get(name)
         if tool is None:
             return ExecutionResult(False, f"Unknown tool: {name}")
+        arguments = tool.normalize_arguments(arguments or {})
         validation_error = tool.validate_arguments(arguments or {})
         if validation_error:
             return ExecutionResult(False, validation_error)

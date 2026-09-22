@@ -8,6 +8,9 @@ class Tool(ABC):
     requires_confirmation: bool = False
     arguments_schema: dict[str, type] = {}
 
+    def normalize_arguments(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        return arguments
+
     def validate_arguments(self, arguments: dict[str, Any]) -> str | None:
         for name, expected_type in self.arguments_schema.items():
             if name not in arguments:
