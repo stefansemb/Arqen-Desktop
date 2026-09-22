@@ -3,4 +3,5 @@ Description=Arqen VPS health check
 
 [Service]
 Type=oneshot
+EnvironmentFile=-/etc/arqen-telegram.env
 ExecStart=/usr/local/bin/arqen-healthcheck
