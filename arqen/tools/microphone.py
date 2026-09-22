@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+import os
 from typing import Callable
 
 _whisper_model = None
@@ -88,12 +89,34 @@ class MicrophoneRecorder:
             with _whisper_lock:
                 if _whisper_model is None:
                     print("Whisper model loading started", flush=True)
-                    _whisper_model = WhisperModel("base", device="cpu", compute_type="int8")
+                    whisper_model = os.environ.get("ARQEN_WHISPER_MODEL", "small")
+                    whisper_device = os.environ.get("ARQEN_WHISPER_DEVICE", "cpu")
+                    whisper_compute = os.environ.get(
+                        "ARQEN_WHISPER_COMPUTE_TYPE",
+                        "int8" if whisper_device == "cpu" else "float16",
+                    )
+                    print(
+                        f"Whisper configuration: model={whisper_model} "
+                        f"device={whisper_device} compute={whisper_compute}",
+                        flush=True,
+                    )
+                    _whisper_model = WhisperModel(
+                        whisper_model,
+                        device=whisper_device,
+                        compute_type=whisper_compute,
+                    )
                     print("Whisper model loading completed", flush=True)
                 model = _whisper_model
             self.on_status("MIC // DECODING")
             print("Whisper decoding started", flush=True)
-            segments, _ = model.transcribe(audio, language="sv", vad_filter=True)
+            segments, _ = model.transcribe(
+                audio,
+                language="sv",
+                beam_size=5,
+                vad_filter=True,
+                condition_on_previous_text=False,
+                initial_prompt="Svenskt tal på svenska. Arqen Desktop.",
+            )
             text = " ".join(segment.text.strip() for segment in segments).strip()
             print("Whisper decoding completed", flush=True)
             if text:

@@ -316,7 +316,7 @@ class ArqenWindow(QMainWindow):
         self.input = QLineEdit()
         self.input.setPlaceholderText("Skriv ett meddelande...")
         self.microphone_status.connect(self.set_status)
-        self.microphone_result.connect(self.input.setText)
+        self.microphone_result.connect(self._handle_microphone_result)
         self.microphone = MicrophoneRecorder(
             on_result=self.microphone_result.emit,
             on_status=self.microphone_status.emit,
@@ -595,6 +595,15 @@ class ArqenWindow(QMainWindow):
             if self.microphone.start():
                 self.mic_button.setText("⏺")
                 self.mic_button.setToolTip("Stoppa mikrofoninspelning")
+
+    @pyqtSlot(str)
+    def _handle_microphone_result(self, text: str) -> None:
+        """Put a transcription in the composer and submit it automatically."""
+        cleaned = text.strip()
+        if not cleaned:
+            return
+        self.input.setText(cleaned)
+        QTimer.singleShot(100, self.send_message)
 
     def show_tool_request(self, name: str) -> None:
         self.set_status(f"TOOL // {name.upper()}")

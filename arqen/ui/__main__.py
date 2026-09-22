@@ -17,6 +17,9 @@ def main() -> None:
     )
     app = QApplication(sys.argv)
     window = ArqenWindow(engine, provider_label=config.name, profile_name=config.profile_name)
+    screen = app.primaryScreen()
+    if screen is not None:
+        window.move(screen.availableGeometry().center() - window.rect().center())
     window.show()
     sys.exit(app.exec())
 
