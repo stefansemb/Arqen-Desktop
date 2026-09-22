@@ -1,46 +1,164 @@
 import json
+from typing import Any, Callable
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
-from arqen.core.contracts import Message, ProviderResponse
+from arqen.core.contracts import Message, ProviderResponse, ToolRequest
 from arqen.providers.base import AIProvider
 
 
 class OpenAICompatibleProvider(AIProvider):
+    """OpenAI-compatible cloud provider with streaming and native tool calls."""
+
+    supports_tools = True
+
     def __init__(self, base_url: str, model: str, timeout: float, api_key: str, provider_name: str = "cloud") -> None:
         self.base_url, self.model, self.timeout, self.api_key, self.provider_name = base_url.rstrip("/"), model, timeout, api_key, provider_name
 
-    def respond(self, messages: list[Message]) -> ProviderResponse:
-        # Tool results are stored internally as ``role=tool`` without the
-        # provider-specific tool_call_id/name metadata.  That is fine for the
-        # local engine, but OpenRouter/OpenAI-compatible gateways reject such
-        # messages.  Preserve the result as ordinary context instead.
-        chat_messages = []
+    # -- request building -------------------------------------------------
+
+    def _chat_messages(self, messages: list[Message]) -> list[dict[str, Any]]:
+        chat: list[dict[str, Any]] = []
         for message in messages:
             if message.role == "tool":
-                chat_messages.append({
-                    "role": "user",
-                    "content": f"Tool result:\n{message.content}",
-                })
-            else:
-                chat_messages.append({"role": message.role, "content": message.content})
-        payload = {"model": self.model, "messages": chat_messages}
-        request = Request(f"{self.base_url}/chat/completions", data=json.dumps(payload).encode(), headers={"Content-Type": "application/json", "Authorization": f"Bearer {self.api_key}"}, method="POST")
+                if message.tool_call_id:
+                    chat.append({
+                        "role": "tool",
+                        "tool_call_id": message.tool_call_id,
+                        "content": message.content,
+                    })
+                else:
+                    # Without a call id the result came from the keyword
+                    # fallback rather than a model-issued call.  Gateways
+                    # reject bare tool messages, so keep it as ordinary
+                    # context instead.
+                    chat.append({"role": "user", "content": f"Tool result:\n{message.content}"})
+                continue
+            entry: dict[str, Any] = {"role": message.role, "content": message.content}
+            if message.role == "assistant" and message.tool_calls:
+                entry["tool_calls"] = list(message.tool_calls)
+            chat.append(entry)
+        return chat
+
+    def _request(self, messages: list[Message], tools: list[dict[str, Any]] | None, stream: bool) -> Request:
+        payload: dict[str, Any] = {"model": self.model, "messages": self._chat_messages(messages)}
+        if tools:
+            payload["tools"] = tools
+            payload["tool_choice"] = "auto"
+        if stream:
+            payload["stream"] = True
+        return Request(
+            f"{self.base_url}/chat/completions",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {self.api_key}"},
+            method="POST",
+        )
+
+    def _fail(self, exc: Exception) -> RuntimeError:
+        detail = exc.read().decode("utf-8", errors="replace") if isinstance(exc, HTTPError) else str(exc)
+        return RuntimeError(f"{self.provider_name} provider error: {detail}")
+
+    # -- responses --------------------------------------------------------
+
+    def respond(self, messages: list[Message], tools: list[dict[str, Any]] | None = None) -> ProviderResponse:
         try:
-            with urlopen(request, timeout=self.timeout) as response:
+            with urlopen(self._request(messages, tools, stream=False), timeout=self.timeout) as response:
                 data = json.loads(response.read().decode("utf-8"))
         except (HTTPError, URLError, OSError) as exc:
-            detail = exc.read().decode("utf-8", errors="replace") if isinstance(exc, HTTPError) else str(exc)
-            raise RuntimeError(f"{self.provider_name} provider error: {detail}") from exc
+            raise self._fail(exc) from exc
         choices = data.get("choices")
         if not isinstance(choices, list) or not choices:
             raise RuntimeError(f"{self.provider_name} provider returned no choices")
         message = choices[0].get("message", {})
-        content = message.get("content", "") if isinstance(message, dict) else ""
-        if not content:
+        if not isinstance(message, dict):
+            raise RuntimeError(f"{self.provider_name} provider returned an unreadable message")
+        return self._build(message.get("content") or "", message.get("tool_calls") or [])
+
+    def respond_stream(
+        self,
+        messages: list[Message],
+        on_chunk: Callable[[str], None] | None = None,
+        should_cancel: Callable[[], bool] | None = None,
+        tools: list[dict[str, Any]] | None = None,
+    ) -> ProviderResponse:
+        parts: list[str] = []
+        calls: dict[int, dict[str, Any]] = {}
+        try:
+            with urlopen(self._request(messages, tools, stream=True), timeout=self.timeout) as response:
+                for raw_line in response:
+                    if should_cancel is not None and should_cancel():
+                        break
+                    line = raw_line.decode("utf-8", errors="replace").strip()
+                    if not line.startswith("data:"):
+                        continue
+                    data = line[5:].strip()
+                    if data == "[DONE]":
+                        break
+                    try:
+                        event = json.loads(data)
+                    except json.JSONDecodeError:
+                        continue
+                    delta = event.get("choices", [{}])[0].get("delta", {})
+                    if not isinstance(delta, dict):
+                        continue
+                    text = delta.get("content")
+                    if text:
+                        parts.append(str(text))
+                        if on_chunk:
+                            on_chunk(str(text))
+                    for fragment in delta.get("tool_calls") or []:
+                        self._merge_call(calls, fragment)
+        except (HTTPError, URLError, OSError) as exc:
+            raise self._fail(exc) from exc
+        ordered = [calls[index] for index in sorted(calls)]
+        if should_cancel is not None and should_cancel():
+            return ProviderResponse(content="".join(parts).strip())
+        return self._build("".join(parts), ordered)
+
+    @staticmethod
+    def _merge_call(calls: dict[int, dict[str, Any]], fragment: dict[str, Any]) -> None:
+        """Accumulate one streamed tool-call delta into the call it belongs to."""
+        if not isinstance(fragment, dict):
+            return
+        index = fragment.get("index", 0)
+        call = calls.setdefault(index, {"id": "", "type": "function", "function": {"name": "", "arguments": ""}})
+        if fragment.get("id"):
+            call["id"] = fragment["id"]
+        function = fragment.get("function")
+        if isinstance(function, dict):
+            # Both the name and the argument JSON can arrive split across
+            # deltas, so append rather than replace.
+            if function.get("name"):
+                call["function"]["name"] += function["name"]
+            if function.get("arguments"):
+                call["function"]["arguments"] += function["arguments"]
+
+    def _build(self, content: str, raw_calls: list[dict[str, Any]]) -> ProviderResponse:
+        content = str(content).strip()
+        request = None
+        for call in raw_calls:
+            function = call.get("function") if isinstance(call, dict) else None
+            if not isinstance(function, dict):
+                continue
+            name = str(function.get("name") or "").strip()
+            if not name:
+                continue
+            raw_arguments = function.get("arguments")
+            if isinstance(raw_arguments, str):
+                try:
+                    arguments = json.loads(raw_arguments) if raw_arguments.strip() else {}
+                except json.JSONDecodeError:
+                    arguments = {}
+            elif isinstance(raw_arguments, dict):
+                arguments = raw_arguments
+            else:
+                arguments = {}
+            request = ToolRequest(name=name, arguments=arguments, call_id=call.get("id") or None)
+            break
+        if not content and request is None:
             raise RuntimeError(f"{self.provider_name} provider returned an empty response")
-        return ProviderResponse(content=str(content).strip())
+        return ProviderResponse(content=content, tool_request=request, tool_calls=tuple(raw_calls))
 
 
 class GeminiProvider(AIProvider):

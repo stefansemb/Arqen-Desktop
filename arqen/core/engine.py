@@ -1,11 +1,28 @@
+import re
+
 from arqen.core.contracts import Message, ToolRequest
 from arqen.core.tool_protocol import parse_tool_request
 from arqen.providers.base import AIProvider
 from arqen.tools.executor import ToolExecutor
 from arqen.tools.registry import ToolRegistry
+from arqen.tools.schema import build_tool_schemas
 from arqen.core.session_store import ChatSession, SessionStore
 from arqen.core.memory_store import MemoryStore
 from collections.abc import Callable
+
+
+_PATH_WITH_EXTENSION = re.compile(r"^(.*?\.[A-Za-z0-9]{1,8})(?:\s|$)")
+
+
+def _leading_path(rest: str) -> str:
+    """Take just the file path out of ``läs <path> och gör något med den``.
+
+    Everything after the first token that carries a file extension belongs to
+    the instruction, not to the path.  Paths themselves may contain spaces, so
+    the extension is what marks the end rather than the first space.
+    """
+    match = _PATH_WITH_EXTENSION.match(rest.strip())
+    return match.group(1) if match else rest.strip()
 
 
 class ConversationEngine:
@@ -18,6 +35,8 @@ class ConversationEngine:
         on_partial_response: Callable[[str], None] | None = None,
         session_store: SessionStore | None = None,
         memory_store: MemoryStore | None = None,
+        should_cancel: Callable[[], bool] | None = None,
+        max_tool_steps: int = 8,
     ) -> None:
         self.provider = provider
         self.tools = tools or ToolRegistry()
@@ -25,6 +44,8 @@ class ConversationEngine:
         self.on_tool_request = on_tool_request
         self.on_confirmation_required = on_confirmation_required
         self.on_partial_response = on_partial_response
+        self.should_cancel = should_cancel
+        self.max_tool_steps = max_tool_steps
         self.session_store = session_store or SessionStore()
         self.memory_store = memory_store or MemoryStore()
         self.session = self.session_store.create()
@@ -86,32 +107,81 @@ class ConversationEngine:
             return document_response
         self._add_desktop_context()
         self.messages.append(Message(role="user", content=prompt))
-        direct_request = self._direct_safe_command(prompt)
-        if direct_request:
-            response = None
-        elif hasattr(self.provider, "respond_stream"):
-            response = self.provider.respond_stream(self.messages, self.on_partial_response)
-        else:
-            response = self.provider.respond(self.messages)
-        request = direct_request or response.tool_request or parse_tool_request(response.content)
-        if request is not None:
+        return self._run_tool_loop(prompt)
+
+    def _cancelled(self) -> bool:
+        return bool(self.should_cancel and self.should_cancel())
+
+    def _run_tool_loop(self, prompt: str) -> str:
+        """Call the provider, run any tool it asks for, then let it continue.
+
+        Providers with native tool calling drive the loop themselves.  For the
+        others the keyword heuristics in ``_direct_safe_command`` stand in, and
+        a single tool result still ends the turn because the model has no way
+        to act on it.
+        """
+        native = getattr(self.provider, "supports_tools", False)
+        tools = build_tool_schemas(self.tools) if native else None
+        direct_request = None if native else self._direct_safe_command(prompt)
+        last_content = ""
+
+        for _ in range(self.max_tool_steps):
+            if self._cancelled():
+                break
+            if direct_request is not None:
+                request, response = direct_request, None
+                direct_request = None
+            else:
+                response = self._call_provider(tools)
+                if self._cancelled():
+                    break
+                request = response.tool_request or parse_tool_request(response.content)
+                last_content = response.content
+
+            if request is None:
+                self.messages.append(Message(role="assistant", content=response.content))
+                self.last_response_speakable = self.voice_enabled
+                self._save_session()
+                return response.content
+
             self.last_response_speakable = False
             if self.on_tool_request:
                 self.on_tool_request(request.name)
+            if response is not None and response.tool_calls:
+                self.messages.append(Message(
+                    role="assistant",
+                    content=response.content,
+                    tool_calls=response.tool_calls,
+                ))
             result = self.executor.execute(request.name, request.arguments)
             if result.confirmation_required:
                 if self.on_confirmation_required:
                     self.on_confirmation_required(request.name, request.arguments)
                 content = f"Jag behöver din bekräftelse innan jag kör verktyget '{request.name}'."
-            else:
-                content = result.output
-            self.messages.append(Message(role="tool", content=content))
-            self._save_session()
-            return content
-        self.messages.append(Message(role="assistant", content=response.content))
-        self.last_response_speakable = self.voice_enabled
+                self.messages.append(Message(role="tool", content=content, tool_call_id=request.call_id))
+                self._save_session()
+                return content
+            self.messages.append(Message(role="tool", content=result.output, tool_call_id=request.call_id))
+            last_content = result.output
+            if not native:
+                # Without native tool calling the model cannot read the result,
+                # so the tool output is the answer.
+                self._save_session()
+                return result.output
+
         self._save_session()
-        return response.content
+        if self._cancelled():
+            return last_content or "Avbrutet."
+        return last_content or "Jag kom inte vidare."
+
+    def _call_provider(self, tools: list[dict] | None):
+        if hasattr(self.provider, "respond_stream"):
+            return self.provider.respond_stream(
+                self.messages, self.on_partial_response, self._cancelled, tools
+            )
+        if tools:
+            return self.provider.respond(self.messages, tools)
+        return self.provider.respond(self.messages)
 
     def _save_session(self) -> None:
         self.session.messages = list(self.messages)
@@ -407,7 +477,7 @@ class ConversationEngine:
             path = prompt.split(" ", 2)[-1].strip()
             return ToolRequest(name="read_xlsx", arguments={"path": path})
         if prompt.strip().lower().startswith("läs ") or prompt.strip().lower().startswith("las "):
-            path = prompt.split(" ", 1)[-1].strip()
+            path = _leading_path(prompt.split(" ", 1)[-1].strip())
             if path.lower().endswith(".pdf"):
                 return ToolRequest(name="read_pdf", arguments={"path": path})
             if path.lower().endswith(".docx"):

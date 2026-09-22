@@ -354,6 +354,7 @@ class ArqenWindow(QMainWindow):
         self._create_visualization_dock()
         self.engine.on_confirmation_required = self.show_confirmation
         self._streaming_displayed = False
+        self._cancel_requested = False
         self._stream_candidate = ""
         self.last_response_ms: float | None = None
         self.fallback_count = 0
@@ -448,6 +449,8 @@ class ArqenWindow(QMainWindow):
         self._animate_loading()
         self.input.setEnabled(False)
         self.stop_button.setEnabled(True)
+        self._cancel_requested = False
+        self.engine.should_cancel = lambda: self._cancel_requested
         self.thread = QThread(self)
         self.worker = ResponseWorker(self.engine, prompt)
         self.worker.moveToThread(self.thread)
@@ -521,6 +524,8 @@ class ArqenWindow(QMainWindow):
         self.refresh_sessions()
 
     def show_partial_response(self, text: str) -> None:
+        if getattr(self, "_cancel_requested", False):
+            return
         text = text.replace("\\*", "").replace("*", "")
         self._stream_candidate += text
         candidate = self._stream_candidate.lstrip()
@@ -585,9 +590,14 @@ class ArqenWindow(QMainWindow):
             pass
         try:
             thread = getattr(self, "thread", None)
-            if thread is not None and thread.isRunning():
+            running = thread is not None and thread.isRunning()
+            if running:
+                # The flag stops the provider's stream loop and the engine's
+                # tool loop; requestInterruption is kept for the worker's own
+                # final check.
+                self._cancel_requested = True
                 thread.requestInterruption()
-            self.set_status(self.provider_status("STOPPED // RESPONSE DISCARDED"))
+            self.set_status(self.provider_status("STOPPED // RESPONSE DISCARDED" if running else "READY"))
             self.stop_button.setEnabled(False)
         except RuntimeError:
             # The response thread may already have been deleted by Qt.

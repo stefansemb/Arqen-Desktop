@@ -62,7 +62,13 @@ class LocalProvider(AIProvider):
             raise RuntimeError("Local AI provider returned an invalid response") from exc
         return ProviderResponse(content=str(content).strip())
 
-    def respond_stream(self, messages: list[Message], on_chunk: Callable[[str], None] | None = None) -> ProviderResponse:
+    def respond_stream(
+        self,
+        messages: list[Message],
+        on_chunk: Callable[[str], None] | None = None,
+        should_cancel: Callable[[], bool] | None = None,
+        tools: list[dict] | None = None,
+    ) -> ProviderResponse:
         payload = {"model": self.model, "messages": [{"role": m.role, "content": m.content} for m in messages], "temperature": 0.7, "stream": True}
         headers = {"Content-Type": "application/json"}
         if self.api_key:
@@ -72,6 +78,8 @@ class LocalProvider(AIProvider):
         try:
             with urlopen(request, timeout=self.timeout) as response:
                 for raw_line in response:
+                    if should_cancel is not None and should_cancel():
+                        break
                     line = raw_line.decode("utf-8", errors="replace").strip()
                     if not line.startswith("data:"):
                         continue
