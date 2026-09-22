@@ -11,3 +11,4 @@ data/memory.json
 data/undo/
 data/*.mp3
 data/provider_metrics.json
+backups/
