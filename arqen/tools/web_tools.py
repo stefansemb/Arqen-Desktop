@@ -53,6 +53,8 @@ def _safe_url(url: str) -> str:
 KNOWN_DOMAIN_CORRECTIONS = {
     "samrida.dev": "samida.dev",
     "semrida.dev": "samida.dev",
+    "samyda.dev": "samida.dev",
+    "samita.tv": "samida.dev",
 }
 
 
