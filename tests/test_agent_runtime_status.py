@@ -8,7 +8,7 @@ class Runtime:
 
 def test_runtime_status_reports_unconfigured_agent(tmp_path):
     store = MissionStore(tmp_path / "mission.sqlite3")
-    store.save_agent(Agent("research", "Research", "research"))
+    store.save_agent(Agent("research", "Research", "research", runtime="hermes"))
 
     status = MissionRunner(store, Runtime()).runtime_status("research")
 
