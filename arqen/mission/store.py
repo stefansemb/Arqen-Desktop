@@ -42,7 +42,7 @@ class MissionStore:
                 CREATE TABLE IF NOT EXISTS schedules (
                     id TEXT PRIMARY KEY, name TEXT NOT NULL, prompt TEXT NOT NULL,
                     agent_id TEXT, cron TEXT, run_at TEXT, enabled INTEGER NOT NULL,
-                    created_at TEXT NOT NULL
+                    created_at TEXT NOT NULL, last_run_at TEXT
                 );
             """)
             columns = {row["name"] for row in db.execute("PRAGMA table_info(agents)").fetchall()}
@@ -51,6 +51,9 @@ class MissionStore:
             columns = {row["name"] for row in db.execute("PRAGMA table_info(agents)").fetchall()}
             if "approval_tools" not in columns:
                 db.execute("ALTER TABLE agents ADD COLUMN approval_tools TEXT NOT NULL DEFAULT '[]'")
+            schedule_columns = {row["name"] for row in db.execute("PRAGMA table_info(schedules)").fetchall()}
+            if schedule_columns and "last_run_at" not in schedule_columns:
+                db.execute("ALTER TABLE schedules ADD COLUMN last_run_at TEXT")
 
     def save_agent(self, agent: Agent) -> None:
         with self._connect() as db:
@@ -115,18 +118,22 @@ class MissionStore:
 
     def save_schedule(self, schedule: Schedule) -> None:
         with self._connect() as db:
-            db.execute("INSERT OR REPLACE INTO schedules VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            db.execute("INSERT OR REPLACE INTO schedules VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                        (schedule.id, schedule.name, schedule.prompt, schedule.agent_id,
-                        schedule.cron, schedule.run_at, int(schedule.enabled), schedule.created_at))
+                       schedule.cron, schedule.run_at, int(schedule.enabled), schedule.created_at, schedule.last_run_at))
 
     def list_schedules(self) -> list[Schedule]:
         with self._connect() as db:
             rows = db.execute("SELECT * FROM schedules ORDER BY name").fetchall()
-        return [Schedule(row["id"], row["name"], row["prompt"], row["agent_id"], row["cron"], row["run_at"], bool(row["enabled"]), row["created_at"]) for row in rows]
+        return [Schedule(row["id"], row["name"], row["prompt"], row["agent_id"], row["cron"], row["run_at"], bool(row["enabled"]), row["created_at"], row["last_run_at"]) for row in rows]
 
     def set_schedule_enabled(self, schedule_id: str, enabled: bool) -> None:
         with self._connect() as db:
             db.execute("UPDATE schedules SET enabled = ? WHERE id = ?", (int(enabled), schedule_id))
+
+    def mark_schedule_run(self, schedule_id: str, timestamp: str) -> None:
+        with self._connect() as db:
+            db.execute("UPDATE schedules SET last_run_at = ? WHERE id = ?", (timestamp, schedule_id))
 
     def get_approval(self, approval_id: str) -> Approval | None:
         with self._connect() as db:

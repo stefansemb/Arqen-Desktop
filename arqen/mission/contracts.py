@@ -81,3 +81,4 @@ class Schedule:
     run_at: str | None = None
     enabled: bool = True
     created_at: str = field(default_factory=now)
+    last_run_at: str | None = None
