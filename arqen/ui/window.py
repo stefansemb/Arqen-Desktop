@@ -418,8 +418,8 @@ class ArqenWindow(QMainWindow):
         navigation_layout.addWidget(QLabel("SYSTEM", objectName="navSection"))
         for label, icon in (("Agents", "♙"), ("Activity", "≋"), ("Memory", "▤")):
             self._add_navigation_button(navigation_layout, label, icon)
-        navigation_layout.addWidget(QLabel("CONTENT", objectName="navSection"))
-        for label, icon in (("Content", "◇"),):
+        navigation_layout.addWidget(QLabel("OPERATIONS", objectName="navSection"))
+        for label, icon in (("Schedules", "◷"), ("Content", "◇")):
             self._add_navigation_button(navigation_layout, label, icon)
         navigation_layout.addStretch(1)
         settings_nav = QPushButton("⚙  Settings")
@@ -556,7 +556,7 @@ class ArqenWindow(QMainWindow):
         dashboard_layout.addWidget(open_chat)
         self.navigation_stack.addWidget(dashboard)
         self.navigation_stack.addWidget(content)
-        for label in ("Tasks", "Workflows", "Agents", "Activity", "Memory", "Content"):
+        for label in ("Tasks", "Workflows", "Schedules", "Agents", "Activity", "Memory", "Content"):
             page = QWidget()
             page_layout = QVBoxLayout(page)
             page_layout.addWidget(QLabel(label.upper(), objectName="title"))
@@ -602,7 +602,7 @@ class ArqenWindow(QMainWindow):
                 "QPushButton { background: transparent; color: #8d969d; border: none; "
                 "text-align: left; padding: 7px 8px; border-radius: 5px; }"
             )
-        pages = {"Dashboard": 0, "Chat": 1, "Tasks": 2, "Workflows": 3, "Agents": 4, "Activity": 5, "Memory": 6, "Content": 7, "Mission Control": getattr(self, "mission_page_index", 0)}
+        pages = {"Dashboard": 0, "Chat": 1, "Tasks": 2, "Workflows": 3, "Schedules": 4, "Agents": 5, "Activity": 6, "Memory": 7, "Content": 8, "Mission Control": getattr(self, "mission_page_index", 0)}
         if name in pages and hasattr(self, "navigation_stack"):
             self.navigation_stack.setCurrentIndex(pages[name])
 
