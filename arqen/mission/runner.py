@@ -8,9 +8,11 @@ from arqen.mission.store import MissionStore
 class MissionRunner:
     """Execute one stored task through an Arqen conversation engine."""
 
-    def __init__(self, store: MissionStore, engine_factory: Callable[[], object] | AgentRuntime) -> None:
+    def __init__(self, store: MissionStore, engine_factory: Callable[[], object] | AgentRuntime,
+                 runtimes: dict[str, AgentRuntime] | None = None) -> None:
         self.store = store
         self.runtime = engine_factory if hasattr(engine_factory, "run") else ArqenRuntime(engine_factory)
+        self.runtimes = runtimes or {}
 
     def run(self, task_id: str) -> str:
         task = self.store.get_task(task_id)
@@ -18,11 +20,12 @@ class MissionRunner:
             raise KeyError(f"Unknown mission task: {task_id}")
         if task.status not in {"queued", "failed"}:
             raise ValueError(f"Task cannot be run from status '{task.status}'")
+        runtime = self._runtime_for(task)
 
         self.store.update_task(task.id, "running")
         self._event(task, "started", "Task started")
         try:
-            result = self.runtime.run(task.prompt)
+            result = runtime.run(task.prompt)
         except Exception as exc:
             self.store.update_task(task.id, "failed", str(exc))
             self._event(task, "failed", str(exc))
@@ -63,3 +66,16 @@ class MissionRunner:
 
     def _event(self, task: Task, kind: str, message: str) -> None:
         self.store.add_event(Event.create(task.id, kind, message))
+
+    def _runtime_for(self, task: Task) -> AgentRuntime:
+        if not task.agent_id:
+            return self.runtime
+        agent = self.store.get_agent(task.agent_id)
+        if agent is None:
+            raise ValueError(f"Agenten '{task.agent_id}' finns inte.")
+        if not agent.enabled:
+            raise ValueError(f"Agenten '{agent.name}' är inaktiv.")
+        runtime = self.runtimes.get(agent.id)
+        if runtime is None:
+            raise ValueError(f"Ingen runtime är konfigurerad för agenten '{agent.name}'.")
+        return runtime

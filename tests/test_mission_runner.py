@@ -54,3 +54,25 @@ def test_runner_accepts_a_runtime_adapter(tmp_path):
             return f"runtime: {prompt}"
 
     assert MissionRunner(store, Runtime()).run(task.id) == "runtime: Gör jobbet"
+
+
+def test_runner_uses_runtime_for_task_agent(tmp_path):
+    store = MissionStore(tmp_path / "mission.sqlite3")
+    from arqen.mission import Agent
+    store.save_agent(Agent("writer", "Writer", "content"))
+    task = Task.create("Write", "skriv", agent_id="writer")
+    store.save_task(task)
+
+    class Specialist:
+        def run(self, prompt):
+            return "specialist-result"
+
+    assert MissionRunner(store, Runtime(), {"writer": Specialist()}).run(task.id) == "specialist-result"
+
+
+def test_runner_rejects_unknown_agent(tmp_path):
+    store = MissionStore(tmp_path / "mission.sqlite3")
+    task = Task.create("Write", "skriv", agent_id="missing")
+    store.save_task(task)
+    with pytest.raises(ValueError, match="finns inte"):
+        MissionRunner(store, Runtime()).run(task.id)
