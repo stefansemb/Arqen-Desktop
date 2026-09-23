@@ -557,6 +557,9 @@ class ArqenWindow(QMainWindow):
         self.navigation_stack.addWidget(dashboard)
         self.navigation_stack.addWidget(content)
         for label in ("Tasks", "Workflows", "Schedules", "Agents", "Activity", "Memory", "Content"):
+            if label == "Tasks":
+                self._add_tasks_view()
+                continue
             page = QWidget()
             page_layout = QVBoxLayout(page)
             page_layout.addWidget(QLabel(label.upper(), objectName="title"))
@@ -582,6 +585,25 @@ class ArqenWindow(QMainWindow):
         self._loading_timer.timeout.connect(self._animate_loading)
         self.refresh_sessions()
         self._select_navigation("Dashboard")
+
+    def _add_tasks_view(self) -> None:
+        page = QWidget()
+        page_layout = QVBoxLayout(page)
+        page_layout.addWidget(QLabel("TASKS", objectName="title"))
+        page_layout.addWidget(QLabel("Monitor, run and retry agent work."))
+        self.mission_tasks = QListWidget()
+        self.mission_tasks.itemClicked.connect(self._show_mission_task)
+        page_layout.addWidget(self.mission_tasks, 1)
+        self.mission_details = QTextEdit(readOnly=True)
+        self.mission_details.setPlaceholderText("Select a task to view status and events.")
+        page_layout.addWidget(self.mission_details)
+        row = QHBoxLayout()
+        for label, handler in (("NEW TASK", self._create_mission_task), ("RUN SELECTED TASK", self._run_mission_task), ("RETRY", self._retry_mission_task)):
+            button = QPushButton(label)
+            button.clicked.connect(handler)
+            row.addWidget(button)
+        page_layout.addLayout(row)
+        self.navigation_stack.addWidget(page)
 
     def _add_navigation_button(self, layout: QVBoxLayout, label: str, icon: str) -> None:
         button = QPushButton(f"{icon}  {label}")
@@ -665,9 +687,9 @@ class ArqenWindow(QMainWindow):
         agent_row.addWidget(edit_agent)
         agent_row.addWidget(toggle_agent)
         panel_layout.addLayout(agent_row)
-        self.mission_tasks = QListWidget()
-        self.mission_tasks.itemClicked.connect(self._show_mission_task)
-        panel_layout.addWidget(self.mission_tasks, 1)
+        legacy_tasks = QListWidget()
+        legacy_tasks.itemClicked.connect(self._show_mission_task)
+        panel_layout.addWidget(legacy_tasks, 1)
         panel_layout.addWidget(QLabel("PENDING APPROVALS"))
         self.mission_approvals = QListWidget()
         self.mission_approvals.itemClicked.connect(self._show_selected_approval)
@@ -686,9 +708,9 @@ class ArqenWindow(QMainWindow):
         run.clicked.connect(self._run_mission_task)
         retry = QPushButton("RETRY")
         retry.clicked.connect(self._retry_mission_task)
-        self.mission_details = QTextEdit(readOnly=True)
-        self.mission_details.setPlaceholderText("Select a task to view status and events.")
-        panel_layout.addWidget(self.mission_details)
+        legacy_details = QTextEdit(readOnly=True)
+        legacy_details.setPlaceholderText("Select a task to view status and events.")
+        panel_layout.addWidget(legacy_details)
         panel_layout.addWidget(create)
         panel_layout.addWidget(run)
         panel_layout.addWidget(retry)
