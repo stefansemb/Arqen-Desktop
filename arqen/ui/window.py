@@ -556,6 +556,7 @@ class ArqenWindow(QMainWindow):
         panel_layout.addLayout(workflow_row)
         panel_layout.addWidget(QLabel("AKTIVITET"))
         self.mission_activity = QListWidget()
+        self.mission_activity.itemClicked.connect(self._open_activity_task)
         panel_layout.addWidget(self.mission_activity)
         self.mission_activity_timer = QTimer(self)
         self.mission_activity_timer.setInterval(2000)
@@ -626,6 +627,7 @@ class ArqenWindow(QMainWindow):
         self.mission_activity.clear()
         for event in self.mission_store.list_all_events(50):
             item = QListWidgetItem(f"{event.created_at} [{event.kind}] {event.message}")
+            item.setData(Qt.ItemDataRole.UserRole, event.task_id)
             if event.kind in {"failed", "approval_rejected"}:
                 item.setForeground(QColor("#ff6b6b"))
             elif event.kind in {"waiting_approval", "approval_requested"}:
@@ -633,6 +635,18 @@ class ArqenWindow(QMainWindow):
             elif event.kind == "completed":
                 item.setForeground(QColor("#b7ff18"))
             self.mission_activity.addItem(item)
+
+    def _open_activity_task(self, item: QListWidgetItem) -> None:
+        task_id = item.data(Qt.ItemDataRole.UserRole)
+        task = self.mission_store.get_task(task_id)
+        if task is None:
+            return
+        for index in range(self.mission_tasks.count()):
+            candidate = self.mission_tasks.item(index)
+            if candidate.data(Qt.ItemDataRole.UserRole) == task.id:
+                self.mission_tasks.setCurrentItem(candidate)
+                self._show_mission_task()
+                return
         self.refresh_mission_workflow_runs()
 
     def refresh_mission_workflows(self) -> None:
