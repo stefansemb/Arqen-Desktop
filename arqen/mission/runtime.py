@@ -30,12 +30,27 @@ class HermesRuntime:
     prompt is passed as one argument and no shell is involved.
     """
 
-    def __init__(self, executable: str, working_dir: Path | str | None = None, timeout: float = 300.0) -> None:
+    def __init__(self, executable: str, working_dir: Path | str | None = None, timeout: float = 300.0,
+                 health_args: tuple[str, ...] = ("--version",)) -> None:
         if not executable.strip():
             raise ValueError("Hermes executable måste anges.")
         self.executable = executable
         self.working_dir = str(working_dir) if working_dir else None
         self.timeout = timeout
+        self.health_args = health_args
+
+    def health(self) -> dict[str, str]:
+        try:
+            completed = subprocess.run(
+                [self.executable, *self.health_args], cwd=self.working_dir,
+                capture_output=True, text=True, timeout=min(self.timeout, 15),
+                check=False, shell=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            return {"status": "offline", "detail": str(exc)}
+        if completed.returncode != 0:
+            return {"status": "error", "detail": (completed.stderr or completed.stdout or "okänt fel").strip()}
+        return {"status": "ready", "detail": (completed.stdout or completed.stderr or "ok").strip()}
 
     def run(self, prompt: str) -> str:
         try:

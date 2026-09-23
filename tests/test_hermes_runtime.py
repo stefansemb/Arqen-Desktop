@@ -25,3 +25,8 @@ def test_hermes_runtime_reports_process_errors(monkeypatch):
     monkeypatch.setattr(subprocess, "run", fake_run)
     with pytest.raises(RuntimeError, match="bad config"):
         HermesRuntime("hermes").run("test")
+
+
+def test_hermes_runtime_health_reports_ready(monkeypatch):
+    monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: subprocess.CompletedProcess(args, 0, "Hermes 1", ""))
+    assert HermesRuntime("hermes").health() == {"status": "ready", "detail": "Hermes 1"}

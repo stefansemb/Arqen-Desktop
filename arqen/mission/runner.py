@@ -87,6 +87,11 @@ class MissionRunner:
         if agent is None:
             raise KeyError(f"Unknown mission agent: {agent_id}")
         configured = agent_id in self.runtimes or agent.runtime == "arqen"
+        runtime = self.runtimes.get(agent_id)
+        if runtime is not None and hasattr(runtime, "health"):
+            health = runtime.health()
+            return {"agent_id": agent.id, "name": agent.name, "runtime": agent.runtime,
+                    "enabled": agent.enabled, "configured": configured, **health}
         return {
             "agent_id": agent.id,
             "name": agent.name,
