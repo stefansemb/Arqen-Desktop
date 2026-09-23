@@ -583,7 +583,8 @@ class ArqenWindow(QMainWindow):
             status = self.mission_runner.runtime_status(agent.id)
             item = QListWidgetItem(f"[{status['status'].upper()}] {agent.name} // {agent.runtime}")
             item.setData(Qt.ItemDataRole.UserRole, agent.id)
-            item.setToolTip(str(status.get("detail", status.get("status", ""))))
+            tools = ", ".join(agent.allowed_tools) or "inga verktyg"
+            item.setToolTip(f"{status.get('detail', status.get('status', ''))}\nTillåtna verktyg: {tools}")
             self.mission_agents.addItem(item)
 
     def _create_mission_agent(self) -> None:
@@ -599,7 +600,18 @@ class ArqenWindow(QMainWindow):
         runtime, accepted = QInputDialog.getItem(self, "Ny agent", "Runtime:", ["arqen", "hermes"], 0, False)
         if not accepted:
             return
-        self.mission_store.save_agent(Agent(agent_id.strip(), name.strip(), role.strip(), runtime))
+        available = [item["name"] for item in self.engine.tools.describe()]
+        tools_text, accepted = QInputDialog.getText(
+            self, "Ny agent", f"Tillåtna verktyg kommaseparerade (tillgängliga: {', '.join(available)}):"
+        )
+        if not accepted:
+            return
+        allowed_tools = tuple(item.strip() for item in tools_text.split(",") if item.strip())
+        unknown = sorted(set(allowed_tools) - set(available))
+        if unknown:
+            QMessageBox.warning(self, "Mission Control", f"Okända verktyg: {', '.join(unknown)}")
+            return
+        self.mission_store.save_agent(Agent(agent_id.strip(), name.strip(), role.strip(), runtime, True, allowed_tools))
         self.refresh_mission_agents()
 
     def _toggle_mission_agent(self) -> None:
