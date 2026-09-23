@@ -715,7 +715,7 @@ class ArqenWindow(QMainWindow):
         self.mission_agents.setViewMode(QListWidget.ViewMode.IconMode)
         self.mission_agents.setResizeMode(QListWidget.ResizeMode.Adjust)
         self.mission_agents.setMovement(QListWidget.Movement.Static)
-        self.mission_agents.setSpacing(10)
+        self.mission_agents.setSpacing(6)
         self.mission_agents.setWordWrap(True)
         page_layout.addWidget(self.mission_agents, 1)
         row = QHBoxLayout()
@@ -1181,8 +1181,8 @@ class ArqenWindow(QMainWindow):
             tools = ", ".join(agent.allowed_tools) or "no tools"
             approvals = ", ".join(agent.approval_tools) or "none"
             card = QFrame(objectName="panel")
-            card.setMinimumSize(280, 132)
-            card.setMaximumWidth(360)
+            card.setMinimumSize(180, 132)
+            card.setMaximumWidth(230)
             card_layout = QVBoxLayout(card)
             heading = QHBoxLayout()
             indicator = QLabel("●")
