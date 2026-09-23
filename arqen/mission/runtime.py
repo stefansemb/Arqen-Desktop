@@ -6,6 +6,13 @@ from typing import Protocol
 from arqen.core.engine import ConversationEngine
 
 
+class ApprovalRequired(RuntimeError):
+    def __init__(self, action: str, payload: dict) -> None:
+        super().__init__(f"Approval required for {action}")
+        self.action = action
+        self.payload = payload
+
+
 class AgentRuntime(Protocol):
     """Execution boundary used by MissionRunner."""
 
@@ -20,12 +27,15 @@ class ArqenRuntime:
         self.engine_factory = engine_factory
 
     def run(self, prompt: str, allowed_tools: tuple[str, ...] | None = None,
-            approval_tools: tuple[str, ...] | None = None) -> str:
+            approval_tools: tuple[str, ...] | None = None,
+            on_approval: Callable[[str, dict], None] | None = None) -> str:
         engine = self.engine_factory()
         if allowed_tools:
             engine.tools._tools = {name: tool for name, tool in engine.tools._tools.items() if name in allowed_tools}
         if hasattr(engine, "executor"):
             engine.executor.forced_confirmation = set(approval_tools or ())
+        if on_approval is not None:
+            engine.on_confirmation_required = on_approval
         return engine.respond(prompt)
 
 

@@ -1,7 +1,7 @@
 from collections.abc import Callable
 
 from arqen.mission.contracts import Approval, Event, Task
-from arqen.mission.runtime import AgentRuntime, ArqenRuntime
+from arqen.mission.runtime import AgentRuntime, ApprovalRequired, ArqenRuntime
 from arqen.mission.store import MissionStore
 
 
@@ -27,11 +27,13 @@ class MissionRunner:
         try:
             if isinstance(runtime, ArqenRuntime):
                 agent = self.store.get_agent(task.agent_id) if task.agent_id else None
-                result = runtime.run(
-                    task.prompt,
-                    agent.allowed_tools if agent and agent.allowed_tools else None,
-                    agent.approval_tools if agent else None,
-                )
+                try:
+                    result = runtime.run(task.prompt, agent.allowed_tools if agent and agent.allowed_tools else None,
+                                         agent.approval_tools if agent else None,
+                                         lambda action, payload: (_ for _ in ()).throw(ApprovalRequired(action, payload)))
+                except ApprovalRequired as approval:
+                    self.request_approval(task.id, approval.action, approval.payload)
+                    return "Task väntar på godkännande."
             else:
                 result = runtime.run(task.prompt)
         except Exception as exc:
