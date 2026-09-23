@@ -316,15 +316,15 @@ class StatsPanelWidget(QWidget):
         layout.setSpacing(6)
         self._rows: dict[str, QLabel] = {}
         self._heading(layout, "DEN HÄR SESSIONEN")
-        for key, label in (("session_tokens", "Tokens"), ("session_split", "In / ut"), ("session_cost", "Kostnad")):
+        for key, label in (("session_tokens", "Tokens"), ("session_split", "In / out"), ("session_cost", "Cost")):
             self._row(layout, key, label)
         layout.addSpacing(8)
         self._heading(layout, "TOTALT")
-        for key, label in (("total_tokens", "Tokens"), ("total_cost", "Kostnad")):
+        for key, label in (("total_tokens", "Tokens"), ("total_cost", "Cost")):
             self._row(layout, key, label)
         layout.addSpacing(8)
-        self._heading(layout, "SENASTE SVARET")
-        for key, label in (("last_turn", "Tokens"), ("last_cost", "Kostnad"), ("last_ms", "Tid")):
+        self._heading(layout, "LATEST RESPONSE")
+        for key, label in (("last_turn", "Tokens"), ("last_cost", "Cost"), ("last_ms", "Time")):
             self._row(layout, key, label)
         layout.addStretch(1)
         self.setStyleSheet(
@@ -431,7 +431,7 @@ class ArqenWindow(QMainWindow):
         sidebar.setFixedWidth(320)
         sidebar_layout = QVBoxLayout(sidebar)
         sidebar_layout.addWidget(QLabel("CHATS", objectName="title"))
-        new_chat = QPushButton("NY CHATT")
+        new_chat = QPushButton("NEW CHAT")
         new_chat.clicked.connect(self.create_new_session)
         sidebar_layout.addWidget(new_chat)
         self.session_list = QListWidget()
@@ -443,12 +443,12 @@ class ArqenWindow(QMainWindow):
         sidebar_layout.addWidget(self.session_list, 1)
         icon_row = QHBoxLayout()
         self.mic_button = QPushButton("🎙")
-        self.mic_button.setToolTip("Starta/stoppa mikrofoninspelning")
-        self.mic_button.setAccessibleName("Starta/stoppa mikrofoninspelning")
+        self.mic_button.setToolTip("Start/stop microphone recording")
+        self.mic_button.setAccessibleName("Start/stop microphone recording")
         self.mic_button.clicked.connect(self.toggle_microphone)
         self.voice_button = QPushButton("🔇")
-        self.voice_button.setToolTip("Röstläge av/på")
-        self.voice_button.setAccessibleName("Röstläge av/på")
+        self.voice_button.setToolTip("Toggle voice mode")
+        self.voice_button.setAccessibleName("Toggle voice mode")
         self.voice_button.clicked.connect(self.toggle_voice_mode)
         settings_button = QPushButton("⚙")
         settings_button.setToolTip("Inställningar")
@@ -489,7 +489,7 @@ class ArqenWindow(QMainWindow):
         chat_surface_layout = QGridLayout(chat_surface)
         chat_surface_layout.setContentsMargins(0, 0, 0, 0)
         chat_surface_layout.addWidget(self.output, 0, 0)
-        placeholder_label = QLabel("Konversationen visas här...", chat_surface)
+        placeholder_label = QLabel("Conversation will appear here...", chat_surface)
         placeholder_label.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
         placeholder_label.setStyleSheet("color: #f2f0eb; background: transparent; padding-top: 8px;")
         placeholder_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
@@ -497,7 +497,7 @@ class ArqenWindow(QMainWindow):
         self.output.textChanged.connect(lambda: placeholder_label.setVisible(not bool(self.output.toPlainText())))
         input_row = QHBoxLayout()
         self.input = QLineEdit()
-        self.input.setPlaceholderText("Skriv ett meddelande...")
+        self.input.setPlaceholderText("Type a message...")
         self.microphone_status.connect(self.set_status)
         self.microphone_result.connect(self._handle_microphone_result)
         self.microphone = MicrophoneRecorder(
@@ -506,18 +506,18 @@ class ArqenWindow(QMainWindow):
         )
         self.input.returnPressed.connect(self.send_message)
         send = QPushButton("▶")
-        send.setToolTip("Skicka")
-        send.setAccessibleName("Skicka")
+        send.setToolTip("Send")
+        send.setAccessibleName("Send")
         send.setStyleSheet("QPushButton { background: transparent; color: #b7ff18; border: none; font-size: 32px; font-weight: 700; padding: 5px 8px 0 8px; } QPushButton:hover { color: #e1ff8a; }")
         send.clicked.connect(self.send_message)
         self.stop_button = QPushButton("■")
-        self.stop_button.setToolTip("Stoppa")
-        self.stop_button.setAccessibleName("Stoppa")
+        self.stop_button.setToolTip("Stop")
+        self.stop_button.setAccessibleName("Stop")
         self.stop_button.setStyleSheet("QPushButton { background: transparent; color: #b7ff18; border: none; font-size: 28px; font-weight: 700; padding: 0 8px; } QPushButton:hover { color: #e1ff8a; }")
         self.stop_button.clicked.connect(self.stop_response)
         self.stop_button.setEnabled(False)
-        self.confirm_button = QPushButton("BEKRÄFTA")
-        self.cancel_button = QPushButton("AVBRYT")
+        self.confirm_button = QPushButton("CONFIRM")
+        self.cancel_button = QPushButton("CANCEL")
         self.confirm_button.clicked.connect(lambda: self.resolve_confirmation(True))
         self.cancel_button.clicked.connect(lambda: self.resolve_confirmation(False))
         self.confirm_button.setVisible(False)
@@ -548,10 +548,10 @@ class ArqenWindow(QMainWindow):
             self.dashboard_cards[key] = value
             cards.addWidget(card, index // 2, index % 2)
         dashboard_layout.addLayout(cards)
-        dashboard_layout.addWidget(QLabel("SENASTE AKTIVITET", objectName="title"))
+        dashboard_layout.addWidget(QLabel("LATEST ACTIVITY", objectName="title"))
         self.dashboard_activity = QListWidget()
         dashboard_layout.addWidget(self.dashboard_activity, 1)
-        open_chat = QPushButton("ÖPPNA ARQEN CHAT")
+        open_chat = QPushButton("OPEN ARQEN CHAT")
         open_chat.clicked.connect(lambda: self.navigation_stack.setCurrentIndex(1))
         dashboard_layout.addWidget(open_chat)
         self.navigation_stack.addWidget(dashboard)
@@ -560,7 +560,7 @@ class ArqenWindow(QMainWindow):
             page = QWidget()
             page_layout = QVBoxLayout(page)
             page_layout.addWidget(QLabel(label.upper(), objectName="title"))
-            page_layout.addWidget(QLabel("Den här vyn byggs vidare i nästa UI-steg."))
+            page_layout.addWidget(QLabel("This view will be expanded in the next UI step."))
             page_layout.addStretch(1)
             self.navigation_stack.addWidget(page)
         layout.addWidget(self.navigation_stack, 1)
@@ -621,9 +621,9 @@ class ArqenWindow(QMainWindow):
         self.mission_workflow_runs = QListWidget()
         panel_layout.addWidget(self.mission_workflow_runs)
         workflow_row = QHBoxLayout()
-        new_workflow = QPushButton("NYTT WORKFLOW")
-        run_workflow = QPushButton("KÖR WORKFLOW")
-        resume_workflow = QPushButton("ÅTERUPPTA RUN")
+        new_workflow = QPushButton("NEW WORKFLOW")
+        run_workflow = QPushButton("RUN WORKFLOW")
+        resume_workflow = QPushButton("RESUME RUN")
         new_workflow.clicked.connect(self._create_mission_workflow)
         run_workflow.clicked.connect(self._run_mission_workflow)
         resume_workflow.clicked.connect(self._resume_mission_workflow)
@@ -631,7 +631,7 @@ class ArqenWindow(QMainWindow):
         workflow_row.addWidget(run_workflow)
         workflow_row.addWidget(resume_workflow)
         panel_layout.addLayout(workflow_row)
-        panel_layout.addWidget(QLabel("AKTIVITET"))
+        panel_layout.addWidget(QLabel("ACTIVITY"))
         self.mission_activity = QListWidget()
         self.mission_activity.itemClicked.connect(self._open_activity_task)
         panel_layout.addWidget(self.mission_activity)
@@ -640,24 +640,24 @@ class ArqenWindow(QMainWindow):
         self.mission_activity_timer.timeout.connect(self.refresh_mission_activity)
         self.mission_activity_timer.timeout.connect(self.refresh_dashboard)
         self.mission_activity_timer.start()
-        panel_layout.addWidget(QLabel("SCHEMAN"))
+        panel_layout.addWidget(QLabel("SCHEDULES"))
         self.mission_schedules = QListWidget()
         panel_layout.addWidget(self.mission_schedules)
         schedule_row = QHBoxLayout()
-        new_schedule = QPushButton("NYTT SCHEMA")
-        toggle_schedule = QPushButton("AKTIVERA/INAKTIVERA")
+        new_schedule = QPushButton("NEW SCHEDULE")
+        toggle_schedule = QPushButton("ENABLE/DISABLE")
         new_schedule.clicked.connect(self._create_mission_schedule)
         toggle_schedule.clicked.connect(self._toggle_mission_schedule)
         schedule_row.addWidget(new_schedule)
         schedule_row.addWidget(toggle_schedule)
         panel_layout.addLayout(schedule_row)
-        panel_layout.addWidget(QLabel("AGENTER"))
+        panel_layout.addWidget(QLabel("AGENTS"))
         self.mission_agents = QListWidget()
         panel_layout.addWidget(self.mission_agents)
         agent_row = QHBoxLayout()
-        new_agent = QPushButton("NY AGENT")
-        edit_agent = QPushButton("REDIGERA")
-        toggle_agent = QPushButton("AKTIVERA/INAKTIVERA")
+        new_agent = QPushButton("NEW AGENT")
+        edit_agent = QPushButton("EDIT")
+        toggle_agent = QPushButton("ENABLE/DISABLE")
         new_agent.clicked.connect(self._create_mission_agent)
         edit_agent.clicked.connect(self._edit_mission_agent)
         toggle_agent.clicked.connect(self._toggle_mission_agent)
@@ -668,26 +668,26 @@ class ArqenWindow(QMainWindow):
         self.mission_tasks = QListWidget()
         self.mission_tasks.itemClicked.connect(self._show_mission_task)
         panel_layout.addWidget(self.mission_tasks, 1)
-        panel_layout.addWidget(QLabel("VÄNTANDE GODKÄNNANDEN"))
+        panel_layout.addWidget(QLabel("PENDING APPROVALS"))
         self.mission_approvals = QListWidget()
         self.mission_approvals.itemClicked.connect(self._show_selected_approval)
         panel_layout.addWidget(self.mission_approvals)
         approval_row = QHBoxLayout()
-        approve = QPushButton("GODKÄNN")
-        reject = QPushButton("AVSLÅ")
+        approve = QPushButton("APPROVE")
+        reject = QPushButton("REJECT")
         approve.clicked.connect(lambda: self._decide_mission_approval("approved"))
         reject.clicked.connect(lambda: self._decide_mission_approval("rejected"))
         approval_row.addWidget(approve)
         approval_row.addWidget(reject)
         panel_layout.addLayout(approval_row)
-        create = QPushButton("NY TASK")
+        create = QPushButton("NEW TASK")
         create.clicked.connect(self._create_mission_task)
-        run = QPushButton("KÖR VALD TASK")
+        run = QPushButton("RUN SELECTED TASK")
         run.clicked.connect(self._run_mission_task)
         retry = QPushButton("RETRY")
         retry.clicked.connect(self._retry_mission_task)
         self.mission_details = QTextEdit(readOnly=True)
-        self.mission_details.setPlaceholderText("Välj en task för att se status och events.")
+        self.mission_details.setPlaceholderText("Select a task to view status and events.")
         panel_layout.addWidget(self.mission_details)
         panel_layout.addWidget(create)
         panel_layout.addWidget(run)
@@ -752,7 +752,7 @@ class ArqenWindow(QMainWindow):
     def refresh_mission_workflows(self) -> None:
         self.mission_workflows.clear()
         for workflow in self.mission_store.list_workflows():
-            item = QListWidgetItem(f"[{len(workflow.steps)} steg] {workflow.name}")
+            item = QListWidgetItem(f"[{len(workflow.steps)} steps] {workflow.name}")
             item.setData(Qt.ItemDataRole.UserRole, workflow.id)
             item.setToolTip("\n".join(f"{step.name} → {step.agent_id or 'Arqen'}" for step in workflow.steps))
             self.mission_workflows.addItem(item)
@@ -760,16 +760,16 @@ class ArqenWindow(QMainWindow):
     def refresh_mission_workflow_runs(self) -> None:
         self.mission_workflow_runs.clear()
         for run in self.mission_store.list_workflow_runs():
-            item = QListWidgetItem(f"[{run.status.upper()}] {run.workflow_id} // steg {run.current_step} // {run.id[:8]}")
+            item = QListWidgetItem(f"[{run.status.upper()}] {run.workflow_id} // step {run.current_step} // {run.id[:8]}")
             item.setData(Qt.ItemDataRole.UserRole, run.id)
             item.setToolTip("\n".join(run.results) or "Inga resultat ännu")
             self.mission_workflow_runs.addItem(item)
 
     def _create_mission_workflow(self) -> None:
-        name, accepted = QInputDialog.getText(self, "Nytt workflow", "Namn:")
+        name, accepted = QInputDialog.getText(self, "New workflow", "Name:")
         if not accepted or not name.strip():
             return
-        raw, accepted = QInputDialog.getMultiLineText(self, "Nytt workflow", "Ett steg per rad: namn | prompt | agent-id (valfritt)")
+        raw, accepted = QInputDialog.getMultiLineText(self, "New workflow", "One step per line: name | prompt | agent-id (optional)")
         if not accepted:
             return
         steps = []
@@ -778,7 +778,7 @@ class ArqenWindow(QMainWindow):
             if len(parts) >= 2 and parts[0] and parts[1]:
                 steps.append(WorkflowStep(parts[0], parts[1], parts[2] if len(parts) == 3 and parts[2] else None))
         if not steps:
-            QMessageBox.warning(self, "Mission Control", "Minst ett giltigt steg krävs.")
+            QMessageBox.warning(self, "Mission Control", "At least one valid step is required.")
             return
         self.mission_store.save_workflow(Workflow(uuid4().hex, name.strip(), tuple(steps)))
         self.refresh_mission_workflows()
@@ -827,22 +827,22 @@ class ArqenWindow(QMainWindow):
             self.mission_schedules.addItem(item)
 
     def _create_mission_schedule(self) -> None:
-        name, accepted = QInputDialog.getText(self, "Nytt schema", "Namn:")
+        name, accepted = QInputDialog.getText(self, "New schedule", "Name:")
         if not accepted or not name.strip():
             return
-        prompt, accepted = QInputDialog.getMultiLineText(self, "Nytt schema", "Task-instruktion:")
+        prompt, accepted = QInputDialog.getMultiLineText(self, "New schedule", "Task instruction:")
         if not accepted or not prompt.strip():
             return
-        mode, accepted = QInputDialog.getItem(self, "Nytt schema", "Typ:", ["Cron", "Engångskörning"], 0, False)
+        mode, accepted = QInputDialog.getItem(self, "New schedule", "Type:", ["Cron", "One-time"], 0, False)
         if not accepted:
             return
         if mode == "Cron":
-            cron, accepted = QInputDialog.getText(self, "Nytt schema", "Cron (t.ex. 0 8 * * *):")
+            cron, accepted = QInputDialog.getText(self, "New schedule", "Cron (e.g. 0 8 * * *):")
             if not accepted or not cron.strip():
                 return
             schedule = Schedule(uuid4().hex, name.strip(), prompt.strip(), cron=cron.strip())
         else:
-            run_at, accepted = QInputDialog.getText(self, "Nytt schema", "Tid (ISO-8601 UTC):")
+            run_at, accepted = QInputDialog.getText(self, "New schedule", "Time (ISO-8601 UTC):")
             if not accepted or not run_at.strip():
                 return
             schedule = Schedule(uuid4().hex, name.strip(), prompt.strip(), run_at=run_at.strip())
@@ -850,7 +850,7 @@ class ArqenWindow(QMainWindow):
         workflows = self.mission_store.list_workflows()
         if workflows:
             choices = ["Vanlig task"] + [f"Workflow: {workflow.name}" for workflow in workflows]
-            selected, accepted = QInputDialog.getItem(self, "Nytt schema", "Kör:", choices, 0, False)
+            selected, accepted = QInputDialog.getItem(self, "New schedule", "Run:", choices, 0, False)
             if not accepted:
                 return
             if selected != choices[0]:
@@ -858,8 +858,8 @@ class ArqenWindow(QMainWindow):
         agents = self.mission_store.list_agents()
         agent_id = None
         if agents:
-            labels = ["Arqen standard"] + [f"{agent.name} — {agent.role}" for agent in agents if agent.enabled]
-            selected, accepted = QInputDialog.getItem(self, "Nytt schema", "Agent:", labels, 0, False)
+            labels = ["Arqen default"] + [f"{agent.name} — {agent.role}" for agent in agents if agent.enabled]
+            selected, accepted = QInputDialog.getItem(self, "New schedule", "Agent:", labels, 0, False)
             if not accepted:
                 return
             if selected != labels[0]:
@@ -888,25 +888,25 @@ class ArqenWindow(QMainWindow):
             item.setData(Qt.ItemDataRole.UserRole, agent.id)
             tools = ", ".join(agent.allowed_tools) or "inga verktyg"
             approvals = ", ".join(agent.approval_tools) or "inga"
-            item.setToolTip(f"{status.get('detail', status.get('status', ''))}\nTillåtna verktyg: {tools}\nKräver approval: {approvals}")
+            item.setToolTip(f"{status.get('detail', status.get('status', ''))}\nAllowed tools: {tools}\nRequires approval: {approvals}")
             self.mission_agents.addItem(item)
 
     def _create_mission_agent(self) -> None:
-        agent_id, accepted = QInputDialog.getText(self, "Ny agent", "ID:")
+        agent_id, accepted = QInputDialog.getText(self, "New agent", "ID:")
         if not accepted or not agent_id.strip():
             return
-        name, accepted = QInputDialog.getText(self, "Ny agent", "Namn:")
+        name, accepted = QInputDialog.getText(self, "New agent", "Name:")
         if not accepted or not name.strip():
             return
-        role, accepted = QInputDialog.getText(self, "Ny agent", "Roll:")
+        role, accepted = QInputDialog.getText(self, "New agent", "Role:")
         if not accepted or not role.strip():
             return
-        runtime, accepted = QInputDialog.getItem(self, "Ny agent", "Runtime:", ["arqen", "hermes"], 0, False)
+        runtime, accepted = QInputDialog.getItem(self, "New agent", "Runtime:", ["arqen", "hermes"], 0, False)
         if not accepted:
             return
         available = [item["name"] for item in self.engine.tools.describe()]
         tools_text, accepted = QInputDialog.getText(
-            self, "Ny agent", f"Tillåtna verktyg kommaseparerade (tillgängliga: {', '.join(available)}):"
+            self, "New agent", f"Allowed tools, comma-separated (available: {', '.join(available)}):"
         )
         if not accepted:
             return
@@ -915,13 +915,13 @@ class ArqenWindow(QMainWindow):
         if unknown:
             QMessageBox.warning(self, "Mission Control", f"Okända verktyg: {', '.join(unknown)}")
             return
-        approvals_text, accepted = QInputDialog.getText(self, "Ny agent", "Verktyg som kräver approval (kommaseparerade):")
+        approvals_text, accepted = QInputDialog.getText(self, "New agent", "Tools requiring approval (comma-separated):")
         if not accepted:
             return
         approval_tools = tuple(value.strip() for value in approvals_text.split(",") if value.strip())
         invalid_approvals = sorted(set(approval_tools) - set(allowed_tools))
         if invalid_approvals:
-            QMessageBox.warning(self, "Mission Control", "Approval-verktyg måste finnas i allowlisten.")
+            QMessageBox.warning(self, "Mission Control", "Approval tools must be included in the allowlist.")
             return
         self.mission_store.save_agent(Agent(agent_id.strip(), name.strip(), role.strip(), runtime, True, allowed_tools, approval_tools))
         self.refresh_mission_agents()
@@ -944,17 +944,17 @@ class ArqenWindow(QMainWindow):
         agent = self.mission_store.get_agent(item.data(Qt.ItemDataRole.UserRole))
         if agent is None:
             return
-        name, accepted = QInputDialog.getText(self, "Redigera agent", "Namn:", text=agent.name)
+        name, accepted = QInputDialog.getText(self, "Edit agent", "Name:", text=agent.name)
         if not accepted or not name.strip():
             return
-        role, accepted = QInputDialog.getText(self, "Redigera agent", "Roll:", text=agent.role)
+        role, accepted = QInputDialog.getText(self, "Edit agent", "Role:", text=agent.role)
         if not accepted or not role.strip():
             return
         runtime, accepted = QInputDialog.getItem(self, "Redigera agent", "Runtime:", ["arqen", "hermes"], max(0, ["arqen", "hermes"].index(agent.runtime)), False)
         if not accepted:
             return
         current_tools = ", ".join(agent.allowed_tools)
-        tools_text, accepted = QInputDialog.getText(self, "Redigera agent", "Tillåtna verktyg:", text=current_tools)
+        tools_text, accepted = QInputDialog.getText(self, "Edit agent", "Allowed tools:", text=current_tools)
         if not accepted:
             return
         available = {entry["name"] for entry in self.engine.tools.describe()}
@@ -1018,23 +1018,23 @@ class ArqenWindow(QMainWindow):
             return
         events = self.mission_store.list_events(task.id)
         agent = self.mission_store.get_agent(task.agent_id) if task.agent_id else None
-        agent_label = agent.name if agent else "Arqen standard"
+        agent_label = agent.name if agent else "Arqen default"
         source = task.schedule_id or "manuell"
-        lines = [f"{task.title}\nStatus: {task.status}\nAgent: {agent_label}\nKälla: {source}\nAttempts: {task.attempts}/{task.max_attempts}\nError: {task.error or 'none'}\n\n{task.prompt}", "", "Events:"]
+        lines = [f"{task.title}\nStatus: {task.status}\nAgent: {agent_label}\nSource: {source}\nAttempts: {task.attempts}/{task.max_attempts}\nError: {task.error or 'none'}\n\n{task.prompt}", "", "Events:"]
         lines.extend(f"{event.created_at}  {event.kind}: {event.message}" for event in events)
         self.mission_details.setPlainText("\n".join(lines))
 
     def _create_mission_task(self) -> None:
-        title, accepted = QInputDialog.getText(self, "Ny Mission Control-task", "Titel:")
+        title, accepted = QInputDialog.getText(self, "New Mission Control task", "Title:")
         if not accepted or not title.strip():
             return
-        prompt, accepted = QInputDialog.getMultiLineText(self, "Ny Mission Control-task", "Uppgift:")
+        prompt, accepted = QInputDialog.getMultiLineText(self, "New Mission Control task", "Task:")
         if not accepted or not prompt.strip():
             return
         agents = self.mission_store.list_agents()
         agent_id = None
         if agents:
-            labels = ["Ingen agent (Arqen standard)"] + [f"{agent.name} — {agent.role}" for agent in agents if agent.enabled]
+            labels = ["No agent (Arqen default)"] + [f"{agent.name} — {agent.role}" for agent in agents if agent.enabled]
             selected, accepted = QInputDialog.getItem(self, "Tilldela agent", "Agent:", labels, 0, False)
             if not accepted:
                 return
@@ -1064,7 +1064,7 @@ class ArqenWindow(QMainWindow):
         self.mission_thread.finished.connect(self.mission_thread.deleteLater)
         self.mission_thread.finished.connect(self._mission_thread_finished)
         self.mission_tasks.setEnabled(False)
-        self.mission_details.setPlainText(f"{task.title}\nStatus: RUNNING\n\nArqen arbetar...")
+        self.mission_details.setPlainText(f"{task.title}\nStatus: RUNNING\n\nArqen is working...")
         self.mission_thread.start()
 
     def _retry_mission_task(self) -> None:
@@ -1072,7 +1072,7 @@ class ArqenWindow(QMainWindow):
         if task is None or task.status != "failed":
             return
         if not self.mission_store.retry_task(task.id):
-            QMessageBox.information(self, "Mission Control", "Tasken har nått max antal försök.")
+            QMessageBox.information(self, "Mission Control", "The task has reached its maximum attempts.")
             return
         self.refresh_mission_tasks()
         self._show_mission_task()
@@ -1099,7 +1099,7 @@ class ArqenWindow(QMainWindow):
         self.session_list.setCurrentItem(item)
         menu = QMenu(self)
         open_action = menu.addAction("Öppna")
-        rename_action = menu.addAction("Byt namn")
+        rename_action = menu.addAction("Rename")
         delete_action = menu.addAction("Ta bort")
         selected = menu.exec(self.session_list.viewport().mapToGlobal(position))
         if selected == open_action:
@@ -1459,11 +1459,11 @@ class ArqenWindow(QMainWindow):
         if self.microphone.recording:
             self.microphone.stop()
             self.mic_button.setText("🎙")
-            self.mic_button.setToolTip("Starta mikrofoninspelning")
+            self.mic_button.setToolTip("Start microphone recording")
         else:
             if self.microphone.start():
                 self.mic_button.setText("⏺")
-                self.mic_button.setToolTip("Stoppa mikrofoninspelning")
+                self.mic_button.setToolTip("Stop microphone recording")
 
     @pyqtSlot(str)
     def _handle_microphone_result(self, text: str) -> None:
@@ -1539,10 +1539,10 @@ class ArqenWindow(QMainWindow):
             self.session_list.addItem(item)
 
     def create_new_session(self) -> None:
-        title, accepted = QInputDialog.getText(self, "Ny chatt", "Titel:")
+        title, accepted = QInputDialog.getText(self, "New chat", "Title:")
         if not accepted:
             return
-        self.engine.new_session(title.strip() or "Ny chatt")
+        self.engine.new_session(title.strip() or "New chat")
         self.output.clear()
         self.status.setText("READY // NEW SESSION")
         self.refresh_sessions()
@@ -1579,7 +1579,7 @@ class ArqenWindow(QMainWindow):
         session = self.selected_session()
         if session is None:
             return
-        title, accepted = QInputDialog.getText(self, "Byt namn", "Nytt namn:", text=session.title)
+        title, accepted = QInputDialog.getText(self, "Rename", "New name:", text=session.title)
         if accepted and title.strip():
             session.title = title.strip()
             self.engine.session_store.save(session)
@@ -1593,7 +1593,7 @@ class ArqenWindow(QMainWindow):
             return
         answer = QMessageBox.question(
             self,
-            "Ta bort chatt",
+            "Delete chat",
             f"Vill du ta bort '{session.title}'?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
@@ -1673,7 +1673,7 @@ class ArqenWindow(QMainWindow):
     def open_settings(self) -> None:
         config = load_provider_config()
         dialog = QDialog(self)
-        dialog.setWindowTitle("Arqen-inställningar")
+        dialog.setWindowTitle("Arqen Settings")
         dialog.setMinimumSize(960, 760)
         dialog.setStyleSheet(CyberpunkGreenTheme.stylesheet())
         dialog_layout = QVBoxLayout(dialog)
@@ -1694,7 +1694,7 @@ class ArqenWindow(QMainWindow):
             tab_form.setVerticalSpacing(12)
         stats_layout = QVBoxLayout(stats_tab)
         stats_layout.setContentsMargins(10, 12, 10, 12)
-        tabs.addTab(profile_tab, "Profil")
+        tabs.addTab(profile_tab, "Profile")
         tabs.addTab(provider_tab, "Provider")
         tabs.addTab(workspace_tab, "Arbetsyta")
         tabs.addTab(fallback_tab, "Fallback")
@@ -1707,8 +1707,8 @@ class ArqenWindow(QMainWindow):
             provider.addItem(label, value)
         provider.setCurrentIndex(max(0, provider.findData(config.name)))
         profile = QComboBox()
-        profile.addItem("Lokal – Ollama", "private")
-        profile.addItem("Snabb – OpenRouter", "fast")
+        profile.addItem("Private – Ollama", "private")
+        profile.addItem("Fast – OpenRouter", "fast")
         profile.addItem("Viktigt – OpenAI", "important")
         profile.addItem("Kreativt arbete – OpenRouter", "creative")
         saved_profile = {"private": "private", "fast": "fast", "important": "important", "creative": "creative"}.get(config.profile_name, "")
@@ -1719,10 +1719,10 @@ class ArqenWindow(QMainWindow):
         profile_hint.setWordWrap(True)
         profile_form.addRow("Beskrivning", profile_hint)
         profile_descriptions = {
-            "private": "Lokal och privat. Använder Ollama utan moln-fallback.",
-            "fast": "Snabb vardagsprofil. Använder OpenRouter utan automatisk fallback.",
-            "important": "För viktigare uppgifter. Använder OpenAI utan automatisk fallback.",
-            "creative": "För idéer, texter och kreativa arbetsflöden via Gemini.",
+            "private": "Local and private. Uses Ollama without cloud fallback.",
+            "fast": "Fast everyday profile. Uses OpenRouter without automatic fallback.",
+            "important": "For important tasks. Uses OpenAI without automatic fallback.",
+            "creative": "For ideas, writing and creative workflows via Gemini.",
         }
         profile_hint.setText(profile_descriptions[profile.currentData()])
         profile.currentIndexChanged.connect(
@@ -1733,8 +1733,8 @@ class ArqenWindow(QMainWindow):
         model.setMinimumWidth(520)
         model.addItem(f"[{config.name.upper()}] {config.model}", config.model)
         model_search = QLineEdit()
-        model_search.setPlaceholderText("Sök modell...")
-        provider_form.addRow("Sök modell", model_search)
+        model_search.setPlaceholderText("Search models...")
+        provider_form.addRow("Search models", model_search)
         model_search.textChanged.connect(lambda text: self.filter_model_choices(model, text))
         model_search.returnPressed.connect(lambda: self.filter_model_choices(model, model_search.text()))
         base_url = QLineEdit(config.base_url)
@@ -1744,9 +1744,9 @@ class ArqenWindow(QMainWindow):
         provider_form.addRow("Provider", provider)
         provider_form.addRow("Modell", model)
         provider_form.addRow("URL", base_url)
-        provider_form.addRow("API-nyckel", api_key)
+        provider_form.addRow("API key", api_key)
         provider_form.addRow("Timeout", timeout)
-        fallback_enabled = QCheckBox("Aktivera fallback vid providerfel")
+        fallback_enabled = QCheckBox("Enable fallback on provider error")
         fallback_enabled.setChecked(config.fallback_enabled)
         fallback_provider = QComboBox()
         for label, value in provider_items:
@@ -1760,11 +1760,11 @@ class ArqenWindow(QMainWindow):
         provider_info = QLabel(self.provider_overview(fallback_enabled.isChecked()))
         provider_info.setWordWrap(True)
         fallback_form.addRow("Providerstatus", provider_info)
-        stats_button = QPushButton("VISA PROVIDERSTATISTIK")
+        stats_button = QPushButton("VIEW PROVIDER STATISTICS")
         stats_button.setObjectName("secondaryButton")
         stats_button.clicked.connect(self.show_provider_metrics)
         stats_layout.addWidget(stats_button)
-        reset_stats = QPushButton("NOLLSTÄLL STATISTIK")
+        reset_stats = QPushButton("RESET STATISTICS")
         reset_stats.setObjectName("secondaryButton")
         reset_stats.clicked.connect(self.reset_provider_metrics)
         stats_layout.addWidget(reset_stats)
@@ -1806,19 +1806,19 @@ class ArqenWindow(QMainWindow):
         workspace_form.addRow(browse)
         workspace_hint = QLabel(
             "Mappen Arqen läser och skriver filer i. Den påverkar bara verktygen — "
-            "inställningar, chattar och minne ligger kvar hos programmet självt "
+            "settings, chats and memory remain inside the application "
             f"({APP_ROOT}). Lämna den tom för att använda programmets egen mapp."
         )
         workspace_hint.setWordWrap(True)
         workspace_form.addRow("Om", workspace_hint)
 
-        refresh_models = QPushButton("HÄMTA MODELLER")
+        refresh_models = QPushButton("FETCH MODELS")
         refresh_models.setObjectName("secondaryButton")
         refresh_models.clicked.connect(lambda: self.load_local_models(model, base_url.text(), api_key.text(), provider.currentData()))
         actions_layout = QHBoxLayout()
         actions_layout.addWidget(refresh_models)
 
-        test_connection = QPushButton("TESTA ANSLUTNING")
+        test_connection = QPushButton("TEST CONNECTION")
         test_connection.setObjectName("secondaryButton")
         test_connection.clicked.connect(
             lambda: self.test_provider_connection(provider.currentData(), model.currentData() or model.currentText(), base_url.text(), api_key.text())
@@ -1872,7 +1872,7 @@ class ArqenWindow(QMainWindow):
 
     def provider_overview(self, fallback_enabled: bool | None = None) -> str:
         provider = getattr(self.engine.provider, "provider_name", self.provider_label).upper()
-        model = getattr(self.engine.provider, "model", "") or "okänd modell"
+        model = getattr(self.engine.provider, "model", "") or "unknown model"
         used = getattr(self.engine.provider, "fallback_used", False)
         if fallback_enabled is True and not used:
             fallback = "aktiverad, inte använd ännu"
@@ -1925,7 +1925,7 @@ class ArqenWindow(QMainWindow):
             QMessageBox.information(self, "Providerstatistik", "Providerstatistiken är nollställd.")
 
     def choose_workspace(self, dialog: QDialog, field: QLineEdit) -> None:
-        chosen = QFileDialog.getExistingDirectory(dialog, "Välj arbetskatalog", field.text() or str(APP_ROOT))
+        chosen = QFileDialog.getExistingDirectory(dialog, "Choose workspace", field.text() or str(APP_ROOT))
         if chosen:
             field.setText(str(Path(chosen)))
 
@@ -1953,7 +1953,7 @@ class ArqenWindow(QMainWindow):
             self.set_status(self.provider_status("READY // PROVIDER UPDATED"))
             dialog.accept()
         except (ValueError, TypeError) as exc:
-            QMessageBox.warning(dialog, "Ogiltiga inställningar", str(exc))
+            QMessageBox.warning(dialog, "Invalid settings", str(exc))
 
     @staticmethod
     def filter_model_choices(model_box: QComboBox, query: str) -> None:
@@ -2013,13 +2013,13 @@ class ArqenWindow(QMainWindow):
         model_box.addItem(f"[{provider.upper()}] {model}", model)
         model_box.setCurrentText(model)
         if provider in {"openai", "openrouter"}:
-            model_box.setToolTip("Tryck HÄMTA OLLAMA-MODELLER för att läsa provider-modeller")
+            model_box.setToolTip("Click FETCH MODELS to load provider models")
         else:
-            model_box.setToolTip("Skriv eller välj modell för denna provider")
+            model_box.setToolTip("Type or select a model for this provider")
 
     def test_provider_connection(self, provider: str, model: str, base_url: str, api_key: str = "") -> None:
         if provider == "demo":
-            QMessageBox.information(self, "Anslutning OK", "Demo-providern är tillgänglig.")
+            QMessageBox.information(self, "Connection OK", "The demo provider is available.")
             return
         try:
             url = f"{base_url.rstrip('/')}/models"
@@ -2041,9 +2041,9 @@ class ArqenWindow(QMainWindow):
                 }
             if model not in available:
                 raise RuntimeError(f"Modellen finns inte hos providern: {model}")
-            QMessageBox.information(self, "Anslutning OK", f"Provider svarar och modellen finns:\n{model}")
+            QMessageBox.information(self, "Connection OK", f"Provider responded and the model exists:\n{model}")
         except Exception as exc:
-            QMessageBox.warning(self, "Anslutning misslyckades", str(exc))
+            QMessageBox.warning(self, "Connection failed", str(exc))
 
     @staticmethod
     def model_label(model_id: str) -> str:
