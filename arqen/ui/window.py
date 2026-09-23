@@ -710,14 +710,19 @@ class ArqenWindow(QMainWindow):
         self.nexus_card_layout = QHBoxLayout(self.nexus_card_host)
         self.nexus_card_layout.setContentsMargins(0, 0, 0, 0)
         page_layout.addWidget(self.nexus_card_host)
-        page_layout.addWidget(QLabel("AGENT TEAM", objectName="sectionLabel"))
-        self.mission_agents = QListWidget()
-        self.mission_agents.setViewMode(QListWidget.ViewMode.IconMode)
-        self.mission_agents.setResizeMode(QListWidget.ResizeMode.Adjust)
-        self.mission_agents.setMovement(QListWidget.Movement.Static)
-        self.mission_agents.setSpacing(10)
-        self.mission_agents.setWordWrap(True)
-        page_layout.addWidget(self.mission_agents, 1)
+        self.agent_group_lists: dict[str, QListWidget] = {}
+        for group in ("RESEARCH", "PRODUCTION", "DISTRIBUTION & REVIEW"):
+            page_layout.addWidget(QLabel(group, objectName="sectionLabel"))
+            group_list = QListWidget()
+            group_list.setViewMode(QListWidget.ViewMode.IconMode)
+            group_list.setResizeMode(QListWidget.ResizeMode.Adjust)
+            group_list.setMovement(QListWidget.Movement.Static)
+            group_list.setSpacing(10)
+            group_list.setWordWrap(True)
+            group_list.itemClicked.connect(lambda _, source=group_list: setattr(self, "mission_agents", source))
+            self.agent_group_lists[group] = group_list
+            page_layout.addWidget(group_list, 1)
+        self.mission_agents = self.agent_group_lists["RESEARCH"]
         row = QHBoxLayout()
         for index, (label, handler) in enumerate((("NEW AGENT", self._create_mission_agent), ("EDIT", self._edit_mission_agent), ("ENABLE/DISABLE", self._toggle_mission_agent))):
             button = QPushButton(label)
@@ -1169,7 +1174,8 @@ class ArqenWindow(QMainWindow):
             self.refresh_mission_schedules()
 
     def refresh_mission_agents(self) -> None:
-        self.mission_agents.clear()
+        for group_list in self.agent_group_lists.values():
+            group_list.clear()
         while self.nexus_card_layout.count():
             child = self.nexus_card_layout.takeAt(0)
             if child.widget() is not None:
@@ -1201,10 +1207,16 @@ class ArqenWindow(QMainWindow):
             if agent.id == "nexus":
                 self.nexus_card_layout.addWidget(card, alignment=Qt.AlignmentFlag.AlignHCenter)
             else:
+                if agent.id in {"scout", "archivist"}:
+                    group_list = self.agent_group_lists["RESEARCH"]
+                elif agent.id in {"forge", "pixel", "pilot"}:
+                    group_list = self.agent_group_lists["PRODUCTION"]
+                else:
+                    group_list = self.agent_group_lists["DISTRIBUTION & REVIEW"]
                 item = QListWidgetItem()
                 item.setData(Qt.ItemDataRole.UserRole, agent.id)
-                self.mission_agents.addItem(item)
-                self.mission_agents.setItemWidget(item, card)
+                group_list.addItem(item)
+                group_list.setItemWidget(item, card)
                 item.setSizeHint(card.sizeHint())
 
     def _open_agent_chat(self, agent_name: str) -> None:
