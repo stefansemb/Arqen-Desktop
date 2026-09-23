@@ -564,6 +564,7 @@ class ArqenWindow(QMainWindow):
         self.dashboard_activity = QListWidget()
         dashboard_layout.addWidget(self.dashboard_activity, 1)
         open_chat = QPushButton("OPEN ARQEN CHAT")
+        self._style_page_action(open_chat, primary=True)
         open_chat.clicked.connect(lambda: self.navigation_stack.setCurrentIndex(1))
         dashboard_layout.addWidget(open_chat)
         self.navigation_stack.addWidget(dashboard)
