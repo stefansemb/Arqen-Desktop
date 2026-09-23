@@ -425,8 +425,10 @@ class ArqenWindow(QMainWindow):
         navigation_layout.addStretch(1)
         settings_nav = QPushButton("⚙  Settings")
         settings_nav.setObjectName("navButton")
-        settings_nav.clicked.connect(self.open_settings)
+        settings_nav.setCursor(Qt.CursorShape.PointingHandCursor)
+        settings_nav.clicked.connect(lambda: (self._select_navigation("Settings"), self.open_settings()))
         navigation_layout.addWidget(settings_nav)
+        self.navigation_buttons["Settings"] = settings_nav
         layout.addWidget(navigation)
         sidebar = QFrame(objectName="panel")
         sidebar.setFixedWidth(320)
