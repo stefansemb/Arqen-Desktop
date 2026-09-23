@@ -568,11 +568,14 @@ class ArqenWindow(QMainWindow):
         create.clicked.connect(self._create_mission_task)
         run = QPushButton("KÖR VALD TASK")
         run.clicked.connect(self._run_mission_task)
+        retry = QPushButton("RETRY")
+        retry.clicked.connect(self._retry_mission_task)
         self.mission_details = QTextEdit(readOnly=True)
         self.mission_details.setPlaceholderText("Välj en task för att se status och events.")
         panel_layout.addWidget(self.mission_details)
         panel_layout.addWidget(create)
         panel_layout.addWidget(run)
+        panel_layout.addWidget(retry)
         dock.setWidget(panel)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock)
         self.mission_dock = dock
@@ -719,7 +722,7 @@ class ArqenWindow(QMainWindow):
         events = self.mission_store.list_events(task.id)
         agent = self.mission_store.get_agent(task.agent_id) if task.agent_id else None
         agent_label = agent.name if agent else "Arqen standard"
-        lines = [f"{task.title}\nStatus: {task.status}\nAgent: {agent_label}\n\n{task.prompt}", "", "Events:"]
+        lines = [f"{task.title}\nStatus: {task.status}\nAgent: {agent_label}\nAttempts: {task.attempts}/{task.max_attempts}\nError: {task.error or 'none'}\n\n{task.prompt}", "", "Events:"]
         lines.extend(f"{event.created_at}  {event.kind}: {event.message}" for event in events)
         self.mission_details.setPlainText("\n".join(lines))
 
@@ -765,6 +768,16 @@ class ArqenWindow(QMainWindow):
         self.mission_tasks.setEnabled(False)
         self.mission_details.setPlainText(f"{task.title}\nStatus: RUNNING\n\nArqen arbetar...")
         self.mission_thread.start()
+
+    def _retry_mission_task(self) -> None:
+        task = self._selected_mission_task()
+        if task is None or task.status != "failed":
+            return
+        if not self.mission_store.retry_task(task.id):
+            QMessageBox.information(self, "Mission Control", "Tasken har nått max antal försök.")
+            return
+        self.refresh_mission_tasks()
+        self._show_mission_task()
 
     def _mission_finished(self, result: str) -> None:
         self.refresh_mission_tasks()
