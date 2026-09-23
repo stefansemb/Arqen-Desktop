@@ -12,8 +12,9 @@ class ExecutionResult:
 
 
 class ToolExecutor:
-    def __init__(self, registry: ToolRegistry) -> None:
+    def __init__(self, registry: ToolRegistry, forced_confirmation: set[str] | None = None) -> None:
         self.registry = registry
+        self.forced_confirmation = forced_confirmation or set()
         self._pending: tuple[str, dict[str, Any]] | None = None
 
     def execute(self, name: str, arguments: dict[str, Any] | None = None) -> ExecutionResult:
@@ -24,7 +25,7 @@ class ToolExecutor:
         validation_error = tool.validate_arguments(arguments or {})
         if validation_error:
             return ExecutionResult(False, validation_error)
-        if tool.requires_confirmation:
+        if tool.requires_confirmation or name in self.forced_confirmation:
             preflight_error = tool.preflight(arguments or {})
             if preflight_error:
                 return ExecutionResult(False, preflight_error)

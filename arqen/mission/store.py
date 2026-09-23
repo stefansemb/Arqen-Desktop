@@ -24,6 +24,7 @@ class MissionStore:
                 CREATE TABLE IF NOT EXISTS agents (
                     id TEXT PRIMARY KEY, name TEXT NOT NULL, role TEXT NOT NULL,
                     runtime TEXT NOT NULL, enabled INTEGER NOT NULL, allowed_tools TEXT NOT NULL DEFAULT '[]'
+                    , approval_tools TEXT NOT NULL DEFAULT '[]'
                 );
                 CREATE TABLE IF NOT EXISTS tasks (
                     id TEXT PRIMARY KEY, title TEXT NOT NULL, prompt TEXT NOT NULL,
@@ -42,11 +43,15 @@ class MissionStore:
             columns = {row["name"] for row in db.execute("PRAGMA table_info(agents)").fetchall()}
             if "allowed_tools" not in columns:
                 db.execute("ALTER TABLE agents ADD COLUMN allowed_tools TEXT NOT NULL DEFAULT '[]'")
+            columns = {row["name"] for row in db.execute("PRAGMA table_info(agents)").fetchall()}
+            if "approval_tools" not in columns:
+                db.execute("ALTER TABLE agents ADD COLUMN approval_tools TEXT NOT NULL DEFAULT '[]'")
 
     def save_agent(self, agent: Agent) -> None:
         with self._connect() as db:
-            db.execute("INSERT OR REPLACE INTO agents VALUES (?, ?, ?, ?, ?, ?)",
-                       (agent.id, agent.name, agent.role, agent.runtime, int(agent.enabled), json.dumps(agent.allowed_tools)))
+            db.execute("INSERT OR REPLACE INTO agents VALUES (?, ?, ?, ?, ?, ?, ?)",
+                       (agent.id, agent.name, agent.role, agent.runtime, int(agent.enabled),
+                        json.dumps(agent.allowed_tools), json.dumps(agent.approval_tools)))
 
     def get_agent(self, agent_id: str) -> Agent | None:
         with self._connect() as db:
@@ -131,7 +136,8 @@ class MissionStore:
 
     @staticmethod
     def _agent(row: sqlite3.Row) -> Agent:
-        return Agent(row["id"], row["name"], row["role"], row["runtime"], bool(row["enabled"]), tuple(json.loads(row["allowed_tools"])))
+        return Agent(row["id"], row["name"], row["role"], row["runtime"], bool(row["enabled"]),
+                     tuple(json.loads(row["allowed_tools"])), tuple(json.loads(row["approval_tools"])))
 
     @staticmethod
     def _approval(row: sqlite3.Row) -> Approval:
