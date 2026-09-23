@@ -409,6 +409,7 @@ class ArqenWindow(QMainWindow):
             "QPushButton#navButton:hover { background: #171d21; color: #dbe2df; }"
         )
         navigation_layout = QVBoxLayout(navigation)
+        self.navigation_buttons: dict[str, QPushButton] = {}
         navigation_layout.addWidget(QLabel("ARQEN", objectName="title"))
         navigation_layout.addWidget(QLabel("MISSION CONTROL"))
         navigation_layout.addWidget(QLabel("OVERVIEW", objectName="navSection"))
@@ -558,6 +559,7 @@ class ArqenWindow(QMainWindow):
         self._loading_timer.setInterval(350)
         self._loading_timer.timeout.connect(self._animate_loading)
         self.refresh_sessions()
+        self._select_navigation("Dashboard")
 
     def _add_navigation_button(self, layout: QVBoxLayout, label: str, icon: str) -> None:
         button = QPushButton(f"{icon}  {label}")
@@ -565,9 +567,19 @@ class ArqenWindow(QMainWindow):
         button.setCursor(Qt.CursorShape.PointingHandCursor)
         button.clicked.connect(lambda _, name=label: self._select_navigation(name))
         layout.addWidget(button)
+        self.navigation_buttons[label] = button
 
     def _select_navigation(self, name: str) -> None:
         self.status.setText(self.provider_status(f"{name.upper()}"))
+        for label, button in getattr(self, "navigation_buttons", {}).items():
+            button.setProperty("active", label == name)
+            button.setStyleSheet(
+                "QPushButton { background: #171d21; color: #dbe2df; border: none; "
+                "border-left: 2px solid #b7ff18; text-align: left; padding: 7px 8px; border-radius: 5px; }"
+                if label == name else
+                "QPushButton { background: transparent; color: #8d969d; border: none; "
+                "text-align: left; padding: 7px 8px; border-radius: 5px; }"
+            )
         pages = {"Dashboard": 0, "Tasks": 1, "Workflows": 2, "Agents": 3, "Activity": 4, "Memory": 5, "Content": 6}
         if name in pages and hasattr(self, "navigation_stack"):
             self.navigation_stack.setCurrentIndex(pages[name])
