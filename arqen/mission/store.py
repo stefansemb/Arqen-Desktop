@@ -45,6 +45,16 @@ class MissionStore:
             db.execute("INSERT OR REPLACE INTO agents VALUES (?, ?, ?, ?, ?)",
                        (agent.id, agent.name, agent.role, agent.runtime, int(agent.enabled)))
 
+    def get_agent(self, agent_id: str) -> Agent | None:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM agents WHERE id = ?", (agent_id,)).fetchone()
+        return self._agent(row) if row else None
+
+    def list_agents(self) -> list[Agent]:
+        with self._connect() as db:
+            rows = db.execute("SELECT * FROM agents ORDER BY name").fetchall()
+        return [self._agent(row) for row in rows]
+
     def save_task(self, task: Task) -> None:
         with self._connect() as db:
             db.execute("INSERT OR REPLACE INTO tasks VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -115,6 +125,10 @@ class MissionStore:
     @staticmethod
     def _task(row: sqlite3.Row) -> Task:
         return Task(row["id"], row["title"], row["prompt"], row["status"], row["agent_id"], row["created_at"], row["updated_at"], row["error"])
+
+    @staticmethod
+    def _agent(row: sqlite3.Row) -> Agent:
+        return Agent(row["id"], row["name"], row["role"], row["runtime"], bool(row["enabled"]))
 
     @staticmethod
     def _approval(row: sqlite3.Row) -> Approval:

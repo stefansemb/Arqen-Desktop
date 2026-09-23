@@ -50,6 +50,10 @@ class ArqenRequestHandler(BaseHTTPRequestHandler):
                 tasks = self.server.mission_store.list_tasks()
                 self._send_json(HTTPStatus.OK, {"data": [self._as_json(item) for item in tasks]})
                 return
+            if path == "/api/v1/mission/agents":
+                agents = self.server.mission_store.list_agents()
+                self._send_json(HTTPStatus.OK, {"data": [self._as_json(item) for item in agents]})
+                return
             if path == "/api/v1/mission/approvals":
                 approvals = self.server.mission_store.list_approvals()
                 self._send_json(HTTPStatus.OK, {"data": [self._as_json(item) for item in approvals]})
@@ -98,6 +102,17 @@ class ArqenRequestHandler(BaseHTTPRequestHandler):
                 self.server.mission_store.save_task(task)
                 self.server.mission_store.add_event(Event.create(task.id, "created", "Task created"))
                 self._send_json(HTTPStatus.CREATED, {"data": self._as_json(task)})
+                return
+            if path == "/api/v1/mission/agents":
+                agent_id = str(payload.get("id", "")).strip()
+                name = str(payload.get("name", "")).strip()
+                role = str(payload.get("role", "")).strip()
+                if not agent_id or not name or not role:
+                    raise ValueError("id, name och role krävs.")
+                from arqen.mission import Agent
+                agent = Agent(agent_id, name, role, str(payload.get("runtime", "arqen")), bool(payload.get("enabled", True)))
+                self.server.mission_store.save_agent(agent)
+                self._send_json(HTTPStatus.CREATED, {"data": self._as_json(agent)})
                 return
             if path == "/api/v1/mission/approvals":
                 task_id = str(payload.get("task_id", "")).strip()
