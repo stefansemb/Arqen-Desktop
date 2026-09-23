@@ -42,3 +42,15 @@ def test_runner_marks_provider_errors_as_failed(tmp_path):
     assert saved.status == "failed"
     assert saved.error == "provider nere"
     assert [event.kind for event in store.list_events(task.id)] == ["started", "failed"]
+
+
+def test_runner_accepts_a_runtime_adapter(tmp_path):
+    store = MissionStore(tmp_path / "mission.sqlite3")
+    task = Task.create("Test", "Gör jobbet")
+    store.save_task(task)
+
+    class Runtime:
+        def run(self, prompt):
+            return f"runtime: {prompt}"
+
+    assert MissionRunner(store, Runtime()).run(task.id) == "runtime: Gör jobbet"

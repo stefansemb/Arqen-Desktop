@@ -1,16 +1,16 @@
 from collections.abc import Callable
 
-from arqen.core.engine import ConversationEngine
 from arqen.mission.contracts import Event, Task
+from arqen.mission.runtime import AgentRuntime, ArqenRuntime
 from arqen.mission.store import MissionStore
 
 
 class MissionRunner:
     """Execute one stored task through an Arqen conversation engine."""
 
-    def __init__(self, store: MissionStore, engine_factory: Callable[[], ConversationEngine]) -> None:
+    def __init__(self, store: MissionStore, engine_factory: Callable[[], object] | AgentRuntime) -> None:
         self.store = store
-        self.engine_factory = engine_factory
+        self.runtime = engine_factory if hasattr(engine_factory, "run") else ArqenRuntime(engine_factory)
 
     def run(self, task_id: str) -> str:
         task = self.store.get_task(task_id)
@@ -22,7 +22,7 @@ class MissionRunner:
         self.store.update_task(task.id, "running")
         self._event(task, "started", "Task started")
         try:
-            result = self.engine_factory().respond(task.prompt)
+            result = self.runtime.run(task.prompt)
         except Exception as exc:
             self.store.update_task(task.id, "failed", str(exc))
             self._event(task, "failed", str(exc))
