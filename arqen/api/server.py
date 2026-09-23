@@ -13,7 +13,7 @@ from urllib.parse import urlparse
 from arqen.application.service import ArqenApplication
 from arqen.config import paths
 from arqen.config.settings import load_mission_runtime_config
-from arqen.mission import Approval, Event, MissionRunner, MissionScheduler, MissionStore, Schedule, Task
+from arqen.mission import Approval, Event, MissionRunner, MissionScheduler, MissionStore, Schedule, Task, Workflow, WorkflowRunner, WorkflowStep
 from arqen.mission.scheduler_worker import SchedulerWorker
 from arqen.mission.task_worker import TaskWorker
 
@@ -28,6 +28,7 @@ class ArqenHTTPServer(ThreadingHTTPServer):
         self.scheduler_worker.start()
         runtimes = self._mission_runtimes()
         self.mission_runner = MissionRunner(self.mission_store, application._engine_factory, runtimes)
+        self.workflow_runner = WorkflowRunner(self.mission_store, self.mission_runner)
         self.task_worker = TaskWorker(self.mission_store, self.mission_runner)
         self.task_worker.start()
 
@@ -89,6 +90,10 @@ class ArqenRequestHandler(BaseHTTPRequestHandler):
             if path == "/api/v1/mission/schedules":
                 schedules = self.server.mission_store.list_schedules()
                 self._send_json(HTTPStatus.OK, {"data": [self._as_json(item) for item in schedules]})
+                return
+            if path == "/api/v1/mission/workflows":
+                workflows = self.mission_store.list_workflows()
+                self._send_json(HTTPStatus.OK, {"data": [self._as_json(item) for item in workflows]})
                 return
             if path.startswith("/api/v1/mission/tasks/"):
                 task_id = path.removeprefix("/api/v1/mission/tasks/").strip("/")
@@ -163,6 +168,26 @@ class ArqenRequestHandler(BaseHTTPRequestHandler):
                 schedule = Schedule(uuid.uuid4().hex, name, prompt, payload.get("agent_id"), payload.get("cron"), payload.get("run_at"))
                 self.server.mission_store.save_schedule(schedule)
                 self._send_json(HTTPStatus.CREATED, {"data": self._as_json(schedule)})
+                return
+            if path == "/api/v1/mission/workflows":
+                name = str(payload.get("name", "")).strip()
+                raw_steps = payload.get("steps", [])
+                if not name or not isinstance(raw_steps, list) or not raw_steps:
+                    raise ValueError("name och minst ett steg krävs.")
+                steps = tuple(WorkflowStep(str(step.get("name", "")).strip(), str(step.get("prompt", "")).strip(), step.get("agent_id")) for step in raw_steps)
+                if any(not step.name or not step.prompt for step in steps):
+                    raise ValueError("Varje steg måste ha name och prompt.")
+                workflow = Workflow(uuid.uuid4().hex, name, steps)
+                self.mission_store.save_workflow(workflow)
+                self._send_json(HTTPStatus.CREATED, {"data": self._as_json(workflow)})
+                return
+            if path.startswith("/api/v1/mission/workflows/") and path.endswith("/run"):
+                workflow_id = path.removeprefix("/api/v1/mission/workflows/").removesuffix("/run").strip("/")
+                workflow = next((item for item in self.mission_store.list_workflows() if item.id == workflow_id), None)
+                if workflow is None:
+                    raise FileNotFoundError(workflow_id)
+                results = self.workflow_runner.run(workflow.name, list(workflow.steps))
+                self._send_json(HTTPStatus.OK, {"data": {"workflow_id": workflow.id, "results": results}})
                 return
             if path.startswith("/api/v1/mission/approvals/") and path.endswith("/decision"):
                 approval_id = path.removeprefix("/api/v1/mission/approvals/").removesuffix("/decision").strip("/")
