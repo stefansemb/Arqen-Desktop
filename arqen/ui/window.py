@@ -539,6 +539,17 @@ class ArqenWindow(QMainWindow):
         self.mission_tasks = QListWidget()
         self.mission_tasks.itemClicked.connect(self._show_mission_task)
         panel_layout.addWidget(self.mission_tasks, 1)
+        panel_layout.addWidget(QLabel("VÄNTANDE GODKÄNNANDEN"))
+        self.mission_approvals = QListWidget()
+        panel_layout.addWidget(self.mission_approvals)
+        approval_row = QHBoxLayout()
+        approve = QPushButton("GODKÄNN")
+        reject = QPushButton("AVSLÅ")
+        approve.clicked.connect(lambda: self._decide_mission_approval("approved"))
+        reject.clicked.connect(lambda: self._decide_mission_approval("rejected"))
+        approval_row.addWidget(approve)
+        approval_row.addWidget(reject)
+        panel_layout.addLayout(approval_row)
         create = QPushButton("NY TASK")
         create.clicked.connect(self._create_mission_task)
         run = QPushButton("KÖR VALD TASK")
@@ -552,6 +563,7 @@ class ArqenWindow(QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock)
         self.mission_dock = dock
         self.refresh_mission_tasks()
+        self.refresh_mission_approvals()
 
     def refresh_mission_tasks(self) -> None:
         if not hasattr(self, "mission_tasks"):
@@ -561,6 +573,29 @@ class ArqenWindow(QMainWindow):
             item = QListWidgetItem(f"[{task.status.upper()}] {task.title}")
             item.setData(Qt.ItemDataRole.UserRole, task.id)
             self.mission_tasks.addItem(item)
+
+    def refresh_mission_approvals(self) -> None:
+        self.mission_approvals.clear()
+        for approval in self.mission_store.list_approvals("pending"):
+            item = QListWidgetItem(f"{approval.action} [{approval.task_id[:8]}]")
+            item.setData(Qt.ItemDataRole.UserRole, approval.id)
+            self.mission_approvals.addItem(item)
+
+    def _decide_mission_approval(self, status: str) -> None:
+        item = self.mission_approvals.currentItem()
+        if item is None:
+            return
+        approval_id = item.data(Qt.ItemDataRole.UserRole)
+        self.mission_store.decide_approval(approval_id, status)
+        approval = self.mission_store.get_approval(approval_id)
+        if status == "approved" and approval is not None:
+            try:
+                self.mission_runner.resume(approval.task_id)
+            except Exception as exc:
+                QMessageBox.warning(self, "Mission Control", str(exc))
+        self.refresh_mission_tasks()
+        self.refresh_mission_approvals()
+        self._show_mission_task()
 
     def _selected_mission_task(self) -> Task | None:
         item = self.mission_tasks.currentItem()

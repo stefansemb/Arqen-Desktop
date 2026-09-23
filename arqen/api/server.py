@@ -121,6 +121,11 @@ class ArqenRequestHandler(BaseHTTPRequestHandler):
                 result = self.server.mission_runner.run(task_id)
                 self._send_json(HTTPStatus.OK, {"data": {"task_id": task_id, "result": result}})
                 return
+            if path.endswith("/resume") and path.startswith("/api/v1/mission/tasks/"):
+                task_id = path.removeprefix("/api/v1/mission/tasks/").removesuffix("/resume").strip("/")
+                result = self.server.mission_runner.resume(task_id)
+                self._send_json(HTTPStatus.OK, {"data": {"task_id": task_id, "result": result}})
+                return
             if path.endswith("/messages") and path.startswith("/api/v1/sessions/"):
                 session_id = path.removeprefix("/api/v1/sessions/").removesuffix("/messages").strip("/")
                 result = self.server.application.send_message(session_id, str(payload.get("content", "")))
