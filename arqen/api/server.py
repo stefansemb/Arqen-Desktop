@@ -52,7 +52,12 @@ class ArqenRequestHandler(BaseHTTPRequestHandler):
                 return
             if path == "/api/v1/mission/agents":
                 agents = self.server.mission_store.list_agents()
-                self._send_json(HTTPStatus.OK, {"data": [self._as_json(item) for item in agents]})
+                data = []
+                for agent in agents:
+                    item = self._as_json(agent)
+                    item["runtime_status"] = self.server.mission_runner.runtime_status(agent.id)
+                    data.append(item)
+                self._send_json(HTTPStatus.OK, {"data": data})
                 return
             if path == "/api/v1/mission/approvals":
                 approvals = self.server.mission_store.list_approvals()

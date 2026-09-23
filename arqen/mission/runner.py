@@ -79,3 +79,17 @@ class MissionRunner:
         if runtime is None:
             raise ValueError(f"Ingen runtime är konfigurerad för agenten '{agent.name}'.")
         return runtime
+
+    def runtime_status(self, agent_id: str) -> dict[str, object]:
+        agent = self.store.get_agent(agent_id)
+        if agent is None:
+            raise KeyError(f"Unknown mission agent: {agent_id}")
+        configured = agent_id in self.runtimes
+        return {
+            "agent_id": agent.id,
+            "name": agent.name,
+            "runtime": agent.runtime,
+            "enabled": agent.enabled,
+            "configured": configured,
+            "status": "ready" if agent.enabled and configured else "offline",
+        }
