@@ -111,6 +111,23 @@ class ResponseWorker(QObject):
             else:
                 self.finished.emit(result, elapsed_ms)
         except Exception as exc:
+                self.failed.emit(str(exc))
+
+
+class MissionWorker(QObject):
+    finished = pyqtSignal(str)
+    failed = pyqtSignal(str)
+
+    def __init__(self, runner: MissionRunner, task_id: str) -> None:
+        super().__init__()
+        self.runner = runner
+        self.task_id = task_id
+
+    @pyqtSlot()
+    def run(self) -> None:
+        try:
+            self.finished.emit(self.runner.run(self.task_id))
+        except Exception as exc:
             self.failed.emit(str(exc))
 
 
@@ -575,12 +592,36 @@ class ArqenWindow(QMainWindow):
         task = self._selected_mission_task()
         if task is None:
             return
-        try:
-            self.mission_runner.run(task.id)
-        except Exception as exc:
-            QMessageBox.warning(self, "Mission Control", str(exc))
+        if getattr(self, "mission_thread", None) is not None and self.mission_thread.isRunning():
+            return
+        self.mission_thread = QThread(self)
+        self.mission_worker = MissionWorker(self.mission_runner, task.id)
+        self.mission_worker.moveToThread(self.mission_thread)
+        self.mission_thread.started.connect(self.mission_worker.run)
+        self.mission_worker.finished.connect(self._mission_finished)
+        self.mission_worker.failed.connect(self._mission_failed)
+        self.mission_worker.finished.connect(self.mission_thread.quit)
+        self.mission_worker.failed.connect(self.mission_thread.quit)
+        self.mission_thread.finished.connect(self.mission_worker.deleteLater)
+        self.mission_thread.finished.connect(self.mission_thread.deleteLater)
+        self.mission_thread.finished.connect(self._mission_thread_finished)
+        self.mission_tasks.setEnabled(False)
+        self.mission_details.setPlainText(f"{task.title}\nStatus: RUNNING\n\nArqen arbetar...")
+        self.mission_thread.start()
+
+    def _mission_finished(self, result: str) -> None:
         self.refresh_mission_tasks()
         self._show_mission_task()
+
+    def _mission_failed(self, message: str) -> None:
+        QMessageBox.warning(self, "Mission Control", message)
+        self.refresh_mission_tasks()
+        self._show_mission_task()
+
+    def _mission_thread_finished(self) -> None:
+        self.mission_tasks.setEnabled(True)
+        self.mission_thread = None
+        self.mission_worker = None
 
     def show_session_menu(self, position) -> None:
         item = self.session_list.itemAt(position)
