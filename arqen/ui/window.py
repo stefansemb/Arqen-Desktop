@@ -707,6 +707,11 @@ class ArqenWindow(QMainWindow):
         page_layout.addWidget(QLabel("AGENTS", objectName="title"))
         page_layout.addWidget(QLabel("Manage runtimes, tools and approval policies."))
         self.mission_agents = QListWidget()
+        self.mission_agents.setViewMode(QListWidget.ViewMode.IconMode)
+        self.mission_agents.setResizeMode(QListWidget.ResizeMode.Adjust)
+        self.mission_agents.setMovement(QListWidget.Movement.Static)
+        self.mission_agents.setSpacing(10)
+        self.mission_agents.setWordWrap(True)
         page_layout.addWidget(self.mission_agents, 1)
         row = QHBoxLayout()
         for index, (label, handler) in enumerate((("NEW AGENT", self._create_mission_agent), ("EDIT", self._edit_mission_agent), ("ENABLE/DISABLE", self._toggle_mission_agent))):
@@ -1160,14 +1165,39 @@ class ArqenWindow(QMainWindow):
 
     def refresh_mission_agents(self) -> None:
         self.mission_agents.clear()
-        for agent in self.mission_store.list_agents():
+        agents = self.mission_store.list_agents()
+        agents.sort(key=lambda agent: (agent.id != "nexus", agent.name.lower()))
+        for agent in agents:
             status = self.mission_runner.runtime_status(agent.id)
-            item = QListWidgetItem(f"[{status['status'].upper()}] {agent.name} // {agent.runtime}")
+            item = QListWidgetItem()
             item.setData(Qt.ItemDataRole.UserRole, agent.id)
-            tools = ", ".join(agent.allowed_tools) or "inga verktyg"
-            approvals = ", ".join(agent.approval_tools) or "inga"
+            tools = ", ".join(agent.allowed_tools) or "no tools"
+            approvals = ", ".join(agent.approval_tools) or "none"
             item.setToolTip(f"{status.get('detail', status.get('status', ''))}\nAllowed tools: {tools}\nRequires approval: {approvals}")
             self.mission_agents.addItem(item)
+            card = QFrame(objectName="panel")
+            card.setMinimumSize(250, 128)
+            card.setMaximumWidth(320)
+            card_layout = QVBoxLayout(card)
+            heading = QHBoxLayout()
+            indicator = QLabel("●")
+            indicator.setStyleSheet("color: #b7ff18; font-size: 14px;")
+            heading.addWidget(indicator)
+            heading.addWidget(QLabel(agent.name, objectName="title"))
+            heading.addStretch(1)
+            card_layout.addLayout(heading)
+            card_layout.addWidget(QLabel(agent.role))
+            card_layout.addWidget(QLabel(f"{agent.runtime} runtime · {len(agent.allowed_tools)} tools"))
+            chat = QPushButton("CHAT")
+            self._style_page_action(chat)
+            chat.clicked.connect(lambda _, name=agent.name: self._open_agent_chat(name))
+            card_layout.addWidget(chat)
+            self.mission_agents.setItemWidget(item, card)
+            item.setSizeHint(card.sizeHint())
+
+    def _open_agent_chat(self, agent_name: str) -> None:
+        self._select_navigation("Chat")
+        self.set_status(self.provider_status(f"CHAT // {agent_name.upper()}"))
 
     def _create_mission_agent(self) -> None:
         agent_id, accepted = QInputDialog.getText(self, "New agent", "ID:")
