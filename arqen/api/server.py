@@ -11,7 +11,7 @@ from urllib.parse import urlparse
 
 from arqen.application.service import ArqenApplication
 from arqen.config import paths
-from arqen.mission import Event, MissionRunner, MissionStore, Task
+from arqen.mission import Approval, Event, MissionRunner, MissionStore, Task
 
 
 class ArqenHTTPServer(ThreadingHTTPServer):
@@ -49,6 +49,10 @@ class ArqenRequestHandler(BaseHTTPRequestHandler):
             if path == "/api/v1/mission/tasks":
                 tasks = self.server.mission_store.list_tasks()
                 self._send_json(HTTPStatus.OK, {"data": [self._as_json(item) for item in tasks]})
+                return
+            if path == "/api/v1/mission/approvals":
+                approvals = self.server.mission_store.list_approvals()
+                self._send_json(HTTPStatus.OK, {"data": [self._as_json(item) for item in approvals]})
                 return
             if path.startswith("/api/v1/mission/tasks/"):
                 task_id = path.removeprefix("/api/v1/mission/tasks/").strip("/")
@@ -94,6 +98,23 @@ class ArqenRequestHandler(BaseHTTPRequestHandler):
                 self.server.mission_store.save_task(task)
                 self.server.mission_store.add_event(Event.create(task.id, "created", "Task created"))
                 self._send_json(HTTPStatus.CREATED, {"data": self._as_json(task)})
+                return
+            if path == "/api/v1/mission/approvals":
+                task_id = str(payload.get("task_id", "")).strip()
+                action = str(payload.get("action", "")).strip()
+                if not task_id or not action:
+                    raise ValueError("task_id och action krävs.")
+                approval = Approval(__import__("uuid").uuid4().hex, task_id, action, dict(payload.get("payload", {})))
+                self.server.mission_store.save_approval(approval)
+                self._send_json(HTTPStatus.CREATED, {"data": self._as_json(approval)})
+                return
+            if path.startswith("/api/v1/mission/approvals/") and path.endswith("/decision"):
+                approval_id = path.removeprefix("/api/v1/mission/approvals/").removesuffix("/decision").strip("/")
+                self.server.mission_store.decide_approval(approval_id, str(payload.get("status", "")))
+                approval = self.server.mission_store.get_approval(approval_id)
+                if approval is None:
+                    raise FileNotFoundError(approval_id)
+                self._send_json(HTTPStatus.OK, {"data": self._as_json(approval)})
                 return
             if path.endswith("/run") and path.startswith("/api/v1/mission/tasks/"):
                 task_id = path.removeprefix("/api/v1/mission/tasks/").removesuffix("/run").strip("/")

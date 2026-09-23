@@ -2,7 +2,7 @@ import json
 import sqlite3
 from pathlib import Path
 
-from arqen.mission.contracts import Agent, Event, Task, TaskStatus
+from arqen.mission.contracts import Agent, Approval, Event, Task, TaskStatus
 
 
 class MissionStore:
@@ -33,6 +33,10 @@ class MissionStore:
                 CREATE TABLE IF NOT EXISTS events (
                     id TEXT PRIMARY KEY, task_id TEXT NOT NULL, kind TEXT NOT NULL,
                     message TEXT NOT NULL, created_at TEXT NOT NULL, payload TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS approvals (
+                    id TEXT PRIMARY KEY, task_id TEXT NOT NULL, action TEXT NOT NULL,
+                    payload TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL
                 );
             """)
 
@@ -80,6 +84,38 @@ class MissionStore:
             rows = db.execute("SELECT * FROM events WHERE task_id = ? ORDER BY created_at", (task_id,)).fetchall()
         return [Event(row["id"], row["task_id"], row["kind"], row["message"], row["created_at"], json.loads(row["payload"])) for row in rows]
 
+    def save_approval(self, approval: Approval) -> None:
+        with self._connect() as db:
+            db.execute("INSERT OR REPLACE INTO approvals VALUES (?, ?, ?, ?, ?, ?)",
+                       (approval.id, approval.task_id, approval.action,
+                        json.dumps(approval.payload), approval.status, approval.created_at))
+
+    def get_approval(self, approval_id: str) -> Approval | None:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM approvals WHERE id = ?", (approval_id,)).fetchone()
+        return self._approval(row) if row else None
+
+    def list_approvals(self, status: str | None = None) -> list[Approval]:
+        query = "SELECT * FROM approvals"
+        params: tuple[str, ...] = ()
+        if status:
+            query += " WHERE status = ?"
+            params = (status,)
+        query += " ORDER BY created_at DESC"
+        with self._connect() as db:
+            rows = db.execute(query, params).fetchall()
+        return [self._approval(row) for row in rows]
+
+    def decide_approval(self, approval_id: str, status: str) -> None:
+        if status not in {"approved", "rejected"}:
+            raise ValueError("Approval måste godkännas eller avslås.")
+        with self._connect() as db:
+            db.execute("UPDATE approvals SET status = ? WHERE id = ?", (status, approval_id))
+
     @staticmethod
     def _task(row: sqlite3.Row) -> Task:
         return Task(row["id"], row["title"], row["prompt"], row["status"], row["agent_id"], row["created_at"], row["updated_at"], row["error"])
+
+    @staticmethod
+    def _approval(row: sqlite3.Row) -> Approval:
+        return Approval(row["id"], row["task_id"], row["action"], json.loads(row["payload"]), row["status"], row["created_at"])
