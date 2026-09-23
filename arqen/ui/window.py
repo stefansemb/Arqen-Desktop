@@ -536,6 +536,9 @@ class ArqenWindow(QMainWindow):
         dock.setObjectName("missionControlDock")
         panel = QWidget()
         panel_layout = QVBoxLayout(panel)
+        panel_layout.addWidget(QLabel("AGENTER"))
+        self.mission_agents = QListWidget()
+        panel_layout.addWidget(self.mission_agents)
         self.mission_tasks = QListWidget()
         self.mission_tasks.itemClicked.connect(self._show_mission_task)
         panel_layout.addWidget(self.mission_tasks, 1)
@@ -564,6 +567,15 @@ class ArqenWindow(QMainWindow):
         self.mission_dock = dock
         self.refresh_mission_tasks()
         self.refresh_mission_approvals()
+        self.refresh_mission_agents()
+
+    def refresh_mission_agents(self) -> None:
+        self.mission_agents.clear()
+        for agent in self.mission_store.list_agents():
+            status = self.mission_runner.runtime_status(agent.id)
+            item = QListWidgetItem(f"[{status['status'].upper()}] {agent.name} // {agent.runtime}")
+            item.setToolTip(str(status.get("detail", status.get("status", ""))))
+            self.mission_agents.addItem(item)
 
     def refresh_mission_tasks(self) -> None:
         if not hasattr(self, "mission_tasks"):
@@ -596,6 +608,7 @@ class ArqenWindow(QMainWindow):
             except Exception as exc:
                 QMessageBox.warning(self, "Mission Control", str(exc))
         self.refresh_mission_tasks()
+        self.refresh_mission_agents()
         self.refresh_mission_approvals()
         self._show_mission_task()
 
@@ -659,6 +672,7 @@ class ArqenWindow(QMainWindow):
 
     def _mission_finished(self, result: str) -> None:
         self.refresh_mission_tasks()
+        self.refresh_mission_agents()
         self._show_mission_task()
 
     def _mission_failed(self, message: str) -> None:
