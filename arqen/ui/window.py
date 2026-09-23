@@ -570,7 +570,9 @@ class ArqenWindow(QMainWindow):
             return
         self.mission_tasks.clear()
         for task in self.mission_store.list_tasks():
-            item = QListWidgetItem(f"[{task.status.upper()}] {task.title}")
+            agent = self.mission_store.get_agent(task.agent_id) if task.agent_id else None
+            owner = f" // {agent.name}" if agent else ""
+            item = QListWidgetItem(f"[{task.status.upper()}] {task.title}{owner}")
             item.setData(Qt.ItemDataRole.UserRole, task.id)
             self.mission_tasks.addItem(item)
 
@@ -606,7 +608,9 @@ class ArqenWindow(QMainWindow):
         if task is None:
             return
         events = self.mission_store.list_events(task.id)
-        lines = [f"{task.title}\nStatus: {task.status}\n\n{task.prompt}", "", "Events:"]
+        agent = self.mission_store.get_agent(task.agent_id) if task.agent_id else None
+        agent_label = agent.name if agent else "Arqen standard"
+        lines = [f"{task.title}\nStatus: {task.status}\nAgent: {agent_label}\n\n{task.prompt}", "", "Events:"]
         lines.extend(f"{event.created_at}  {event.kind}: {event.message}" for event in events)
         self.mission_details.setPlainText("\n".join(lines))
 
@@ -617,7 +621,16 @@ class ArqenWindow(QMainWindow):
         prompt, accepted = QInputDialog.getMultiLineText(self, "Ny Mission Control-task", "Uppgift:")
         if not accepted or not prompt.strip():
             return
-        task = Task.create(title.strip(), prompt.strip())
+        agents = self.mission_store.list_agents()
+        agent_id = None
+        if agents:
+            labels = ["Ingen agent (Arqen standard)"] + [f"{agent.name} — {agent.role}" for agent in agents if agent.enabled]
+            selected, accepted = QInputDialog.getItem(self, "Tilldela agent", "Agent:", labels, 0, False)
+            if not accepted:
+                return
+            if selected != labels[0]:
+                agent_id = next(agent.id for agent in agents if f"{agent.name} — {agent.role}" == selected)
+        task = Task.create(title.strip(), prompt.strip(), agent_id=agent_id)
         self.mission_store.save_task(task)
         from arqen.mission import Event
         self.mission_store.add_event(Event.create(task.id, "created", "Task created"))
