@@ -1051,8 +1051,22 @@ class ArqenWindow(QMainWindow):
         workflow = next((entry for entry in self.mission_store.list_workflows() if entry.id == item.data(Qt.ItemDataRole.UserRole)), None)
         if workflow is None:
             return
+        topic, accepted = QInputDialog.getText(self, "Run workflow", "Topic:")
+        if not accepted or not topic.strip():
+            return
+        audience, accepted = QInputDialog.getText(self, "Run workflow", "Target audience (optional):")
+        if not accepted:
+            return
+        content_format, accepted = QInputDialog.getText(self, "Run workflow", "Content format (optional):", text="YouTube video")
+        if not accepted:
+            return
+        input_text = f"Topic: {topic.strip()}"
+        if audience.strip():
+            input_text += f"\nTarget audience: {audience.strip()}"
+        if content_format.strip():
+            input_text += f"\nFormat: {content_format.strip()}"
         try:
-            self.workflow_runner.run(workflow.name, list(workflow.steps), workflow_id=workflow.id)
+            self.workflow_runner.run(workflow.name, list(workflow.steps), workflow_id=workflow.id, input_text=input_text)
         except Exception as exc:
             QMessageBox.warning(self, "Mission Control", str(exc))
         self.refresh_mission_tasks()

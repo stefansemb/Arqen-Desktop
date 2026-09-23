@@ -42,13 +42,15 @@ class WorkflowRunner:
     def save(self, workflow: Workflow) -> None:
         self.store.save_workflow(workflow)
 
-    def run(self, name: str, steps: list[WorkflowStep], workflow_id: str | None = None) -> list[str]:
+    def run(self, name: str, steps: list[WorkflowStep], workflow_id: str | None = None, input_text: str = "") -> list[str]:
         run = WorkflowRun(uuid4().hex, workflow_id or name, "running")
         self.store.save_workflow_run(run)
         results: list[str] = []
         previous = ""
-        for step in steps:
-            prompt = step.prompt.replace("{{previous}}", previous)
+        for index, step in enumerate(steps):
+            prompt = step.prompt.replace("{{previous}}", previous).replace("{{input}}", input_text)
+            if index == 0 and input_text and "{{input}}" not in step.prompt:
+                prompt = f"Workflow input:\n{input_text}\n\n{prompt}"
             task = Task(uuid4().hex, f"{name}: {step.name}", prompt, agent_id=step.agent_id)
             self.store.save_task(task)
             result = self.runner.run(task.id)
