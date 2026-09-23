@@ -1524,7 +1524,7 @@ class ArqenWindow(QMainWindow):
             self.append_message("ARQEN", result, CyberpunkGreenTheme.text)
         else:
             self.output.append("")
-        self.voice_button.setText("🔊" if self.engine.voice_enabled else "🔇")
+        self._set_voice_button_text("🔊" if self.engine.voice_enabled else "🔇")
         if self.engine.last_response_speakable:
             from arqen.tools.speech import SpeakTextTool
             self.stop_button.setEnabled(True)
@@ -1537,6 +1537,17 @@ class ArqenWindow(QMainWindow):
         self.set_status(self.provider_status("READY // RESPONSE COMPLETE", elapsed_ms))
         self.refresh_stats_panel()
         self.refresh_sessions()
+
+    def _set_voice_button_text(self, text: str) -> None:
+        """Update the voice control if the window is still alive."""
+        button = getattr(self, "voice_button", None)
+        if button is None:
+            return
+        try:
+            button.setText(text)
+        except RuntimeError:
+            # A response can finish after Qt has deleted the chat controls.
+            return
 
     def _end_streaming_block(self) -> None:
         """Close the current ARQEN block so the next chunk starts a new one.
@@ -1647,7 +1658,7 @@ class ArqenWindow(QMainWindow):
     def toggle_voice_mode(self) -> None:
         self.engine.voice_enabled = not self.engine.voice_enabled
         if self.engine.voice_enabled:
-            self.voice_button.setText("🔊")
+            self._set_voice_button_text("🔊")
             self.set_status(self.provider_status("VOICE // ENABLED"))
         else:
             try:
@@ -1655,7 +1666,7 @@ class ArqenWindow(QMainWindow):
                 stop_speech()
             except Exception:
                 pass
-            self.voice_button.setText("🔇")
+            self._set_voice_button_text("🔇")
             self.set_status(self.provider_status("VOICE // DISABLED"))
 
     def toggle_microphone(self) -> None:
