@@ -467,6 +467,17 @@ class ArqenWindow(QMainWindow):
 
         content = QWidget()
         content_layout = QVBoxLayout(content)
+        session_bar = QHBoxLayout()
+        session_bar.addWidget(QLabel("SESSION"))
+        self.chat_session_selector = QComboBox()
+        self.chat_session_selector.setMinimumWidth(220)
+        self.chat_session_selector.activated.connect(self._load_selected_chat_from_bar)
+        session_bar.addWidget(self.chat_session_selector, 1)
+        new_chat_button = QPushButton("NEW CHAT")
+        self._style_page_action(new_chat_button, primary=True)
+        new_chat_button.clicked.connect(self.create_new_session)
+        session_bar.addWidget(new_chat_button)
+        content_layout.addLayout(session_bar)
         header = QFrame(objectName="panel")
         header_layout = QVBoxLayout(header)
         header_layout.addWidget(QLabel("ARQEN DESKTOP", objectName="title"))
@@ -1687,10 +1698,36 @@ class ArqenWindow(QMainWindow):
 
     def refresh_sessions(self) -> None:
         self.session_list.clear()
+        selector = getattr(self, "chat_session_selector", None)
+        if selector is not None:
+            selector.blockSignals(True)
+            selector.clear()
         for session in self.engine.session_store.list_sessions():
             item = QListWidgetItem(session.title)
             item.setData(Qt.ItemDataRole.UserRole, session.session_id)
             self.session_list.addItem(item)
+            if selector is not None:
+                selector.addItem(session.title, session.session_id)
+        if selector is not None:
+            current_id = self.engine.session.session_id if self.engine.session else None
+            current_index = selector.findData(current_id)
+            if current_index >= 0:
+                selector.setCurrentIndex(current_index)
+            selector.blockSignals(False)
+
+    def _load_selected_chat_from_bar(self, index: int) -> None:
+        selector = getattr(self, "chat_session_selector", None)
+        if selector is None:
+            return
+        session_id = selector.itemData(index)
+        if not session_id:
+            return
+        for row in range(self.session_list.count()):
+            item = self.session_list.item(row)
+            if item.data(Qt.ItemDataRole.UserRole) == session_id:
+                self.session_list.setCurrentItem(item)
+                self.load_selected_session()
+                return
 
     def create_new_session(self) -> None:
         title, accepted = QInputDialog.getText(self, "New chat", "Title:")
