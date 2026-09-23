@@ -45,7 +45,7 @@ class MissionStore:
 
     def save_agent(self, agent: Agent) -> None:
         with self._connect() as db:
-            db.execute("INSERT OR REPLACE INTO agents VALUES (?, ?, ?, ?, ?)",
+            db.execute("INSERT OR REPLACE INTO agents VALUES (?, ?, ?, ?, ?, ?)",
                        (agent.id, agent.name, agent.role, agent.runtime, int(agent.enabled), json.dumps(agent.allowed_tools)))
 
     def get_agent(self, agent_id: str) -> Agent | None:
