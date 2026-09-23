@@ -3,6 +3,7 @@ import sqlite3
 from pathlib import Path
 
 from arqen.mission.contracts import Agent, Approval, Event, Schedule, Task, TaskStatus
+from arqen.mission.workflow import Workflow, WorkflowStep
 
 
 class MissionStore:
@@ -45,6 +46,10 @@ class MissionStore:
                     id TEXT PRIMARY KEY, name TEXT NOT NULL, prompt TEXT NOT NULL,
                     agent_id TEXT, cron TEXT, run_at TEXT, enabled INTEGER NOT NULL,
                     created_at TEXT NOT NULL, last_run_at TEXT
+                );
+                CREATE TABLE IF NOT EXISTS workflows (
+                    id TEXT PRIMARY KEY, name TEXT NOT NULL, steps TEXT NOT NULL,
+                    enabled INTEGER NOT NULL
                 );
             """)
             columns = {row["name"] for row in db.execute("PRAGMA table_info(agents)").fetchall()}
@@ -144,6 +149,17 @@ class MissionStore:
             db.execute("INSERT OR REPLACE INTO schedules VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                        (schedule.id, schedule.name, schedule.prompt, schedule.agent_id,
                        schedule.cron, schedule.run_at, int(schedule.enabled), schedule.created_at, schedule.last_run_at))
+
+    def save_workflow(self, workflow: Workflow) -> None:
+        steps = [{"name": step.name, "prompt": step.prompt, "agent_id": step.agent_id} for step in workflow.steps]
+        with self._connect() as db:
+            db.execute("INSERT OR REPLACE INTO workflows VALUES (?, ?, ?, ?)",
+                       (workflow.id, workflow.name, json.dumps(steps), int(workflow.enabled)))
+
+    def list_workflows(self) -> list[Workflow]:
+        with self._connect() as db:
+            rows = db.execute("SELECT * FROM workflows ORDER BY name").fetchall()
+        return [Workflow(row["id"], row["name"], tuple(WorkflowStep(item["name"], item["prompt"], item.get("agent_id")) for item in json.loads(row["steps"])), bool(row["enabled"])) for row in rows]
 
     def list_schedules(self) -> list[Schedule]:
         with self._connect() as db:

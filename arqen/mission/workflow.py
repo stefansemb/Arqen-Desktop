@@ -1,9 +1,13 @@
+from __future__ import annotations
+
 from dataclasses import dataclass
+import json
 from uuid import uuid4
+from typing import TYPE_CHECKING
 
 from arqen.mission.contracts import Task
-from arqen.mission.runner import MissionRunner
-from arqen.mission.store import MissionStore
+if TYPE_CHECKING:
+    from arqen.mission.runner import MissionRunner
 
 
 @dataclass(frozen=True)
@@ -13,10 +17,21 @@ class WorkflowStep:
     agent_id: str | None = None
 
 
+@dataclass(frozen=True)
+class Workflow:
+    id: str
+    name: str
+    steps: tuple[WorkflowStep, ...]
+    enabled: bool = True
+
+
 class WorkflowRunner:
     def __init__(self, store: MissionStore, runner: MissionRunner) -> None:
         self.store = store
         self.runner = runner
+
+    def save(self, workflow: Workflow) -> None:
+        self.store.save_workflow(workflow)
 
     def run(self, name: str, steps: list[WorkflowStep]) -> list[str]:
         results: list[str] = []
