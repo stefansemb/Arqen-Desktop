@@ -944,6 +944,7 @@ class ArqenWindow(QMainWindow):
         self.refresh_mission_agents()
         self.refresh_mission_schedules()
         self.refresh_mission_workflows()
+        self.refresh_mission_workflow_runs()
         self.refresh_mission_activity()
         self.refresh_dashboard()
 
