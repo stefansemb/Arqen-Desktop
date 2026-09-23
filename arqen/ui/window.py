@@ -557,6 +557,10 @@ class ArqenWindow(QMainWindow):
         panel_layout.addWidget(QLabel("AKTIVITET"))
         self.mission_activity = QListWidget()
         panel_layout.addWidget(self.mission_activity)
+        self.mission_activity_timer = QTimer(self)
+        self.mission_activity_timer.setInterval(2000)
+        self.mission_activity_timer.timeout.connect(self.refresh_mission_activity)
+        self.mission_activity_timer.start()
         panel_layout.addWidget(QLabel("SCHEMAN"))
         self.mission_schedules = QListWidget()
         panel_layout.addWidget(self.mission_schedules)
@@ -621,7 +625,14 @@ class ArqenWindow(QMainWindow):
     def refresh_mission_activity(self) -> None:
         self.mission_activity.clear()
         for event in self.mission_store.list_all_events(50):
-            self.mission_activity.addItem(f"{event.created_at} [{event.kind}] {event.message}")
+            item = QListWidgetItem(f"{event.created_at} [{event.kind}] {event.message}")
+            if event.kind in {"failed", "approval_rejected"}:
+                item.setForeground(QColor("#ff6b6b"))
+            elif event.kind in {"waiting_approval", "approval_requested"}:
+                item.setForeground(QColor("#ffd166"))
+            elif event.kind == "completed":
+                item.setForeground(QColor("#b7ff18"))
+            self.mission_activity.addItem(item)
         self.refresh_mission_workflow_runs()
 
     def refresh_mission_workflows(self) -> None:
