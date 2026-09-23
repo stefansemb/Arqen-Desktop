@@ -13,7 +13,8 @@ from urllib.parse import urlparse
 from arqen.application.service import ArqenApplication
 from arqen.config import paths
 from arqen.config.settings import load_mission_runtime_config
-from arqen.mission import Approval, Event, MissionRunner, MissionStore, Schedule, Task
+from arqen.mission import Approval, Event, MissionRunner, MissionScheduler, MissionStore, Schedule, Task
+from arqen.mission.scheduler_worker import SchedulerWorker
 
 
 class ArqenHTTPServer(ThreadingHTTPServer):
@@ -22,8 +23,14 @@ class ArqenHTTPServer(ThreadingHTTPServer):
         self.application = application
         self.token = token
         self.mission_store = MissionStore(paths.data_dir() / "mission.sqlite3")
+        self.scheduler_worker = SchedulerWorker(MissionScheduler(self.mission_store))
+        self.scheduler_worker.start()
         runtimes = self._mission_runtimes()
         self.mission_runner = MissionRunner(self.mission_store, application._engine_factory, runtimes)
+
+    def server_close(self) -> None:
+        self.scheduler_worker.stop()
+        super().server_close()
 
     def _mission_runtimes(self) -> dict[str, Any]:
         config = load_mission_runtime_config()
