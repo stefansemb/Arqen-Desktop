@@ -399,6 +399,22 @@ class ArqenWindow(QMainWindow):
 
         root = QWidget()
         layout = QHBoxLayout(root)
+        navigation = QFrame(objectName="panel")
+        navigation.setFixedWidth(132)
+        navigation_layout = QVBoxLayout(navigation)
+        navigation_layout.addWidget(QLabel("ARQEN", objectName="title"))
+        navigation_layout.addWidget(QLabel("MISSION CONTROL"))
+        for label in ("Dashboard", "Tasks", "Workflows", "Agents", "Activity", "Memory", "Content"):
+            button = QPushButton(label)
+            button.setObjectName("navButton")
+            button.clicked.connect(lambda _, name=label: self._select_navigation(name))
+            navigation_layout.addWidget(button)
+        navigation_layout.addStretch(1)
+        settings_nav = QPushButton("Settings")
+        settings_nav.setObjectName("navButton")
+        settings_nav.clicked.connect(self.open_settings)
+        navigation_layout.addWidget(settings_nav)
+        layout.addWidget(navigation)
         sidebar = QFrame(objectName="panel")
         sidebar.setFixedWidth(320)
         sidebar_layout = QVBoxLayout(sidebar)
@@ -522,6 +538,11 @@ class ArqenWindow(QMainWindow):
         self._loading_timer.setInterval(350)
         self._loading_timer.timeout.connect(self._animate_loading)
         self.refresh_sessions()
+
+    def _select_navigation(self, name: str) -> None:
+        self.status.setText(self.provider_status(f"{name.upper()}"))
+        if hasattr(self, "mission_dock"):
+            self.mission_dock.setVisible(name != "Dashboard" or self.mission_dock.isVisible())
 
     def _create_mission_dock(self) -> None:
         """Create the first functional Mission Control surface."""
