@@ -601,8 +601,12 @@ class ArqenWindow(QMainWindow):
         for schedule in self.mission_store.list_schedules():
             mode = schedule.cron or f"once: {schedule.run_at}"
             state = "ON" if schedule.enabled else "OFF"
-            item = QListWidgetItem(f"[{state}] {schedule.name} // {mode}")
+            agent = self.mission_store.get_agent(schedule.agent_id) if schedule.agent_id else None
+            count = sum(1 for task in self.mission_store.list_tasks() if task.title == schedule.name)
+            last = schedule.last_run_at or "aldrig"
+            item = QListWidgetItem(f"[{state}] {schedule.name} // {mode} // {agent.name if agent else 'Arqen'} // tasks: {count}")
             item.setData(Qt.ItemDataRole.UserRole, schedule.id)
+            item.setToolTip(f"Senaste körning: {last}")
             self.mission_schedules.addItem(item)
 
     def _create_mission_schedule(self) -> None:
@@ -625,6 +629,16 @@ class ArqenWindow(QMainWindow):
             if not accepted or not run_at.strip():
                 return
             schedule = Schedule(uuid4().hex, name.strip(), prompt.strip(), run_at=run_at.strip())
+        agents = self.mission_store.list_agents()
+        agent_id = None
+        if agents:
+            labels = ["Arqen standard"] + [f"{agent.name} — {agent.role}" for agent in agents if agent.enabled]
+            selected, accepted = QInputDialog.getItem(self, "Nytt schema", "Agent:", labels, 0, False)
+            if not accepted:
+                return
+            if selected != labels[0]:
+                agent_id = next(agent.id for agent in agents if f"{agent.name} — {agent.role}" == selected)
+            schedule = Schedule(schedule.id, schedule.name, schedule.prompt, agent_id, schedule.cron, schedule.run_at)
         self.mission_store.save_schedule(schedule)
         self.refresh_mission_schedules()
 
