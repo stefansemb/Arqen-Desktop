@@ -233,6 +233,10 @@ class ArqenRequestHandler(BaseHTTPRequestHandler):
             if "messages" in result:
                 result["messages"] = [ArqenRequestHandler._as_json(item) for item in value.messages]
             return result
+        if isinstance(value, list):
+            return [ArqenRequestHandler._as_json(item) for item in value]
+        if isinstance(value, dict):
+            return {key: ArqenRequestHandler._as_json(item) for key, item in value.items()}
         return value
 
 
