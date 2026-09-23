@@ -35,6 +35,7 @@ class Task:
     claimed_at: str | None = None
     attempts: int = 0
     max_attempts: int = 3
+    schedule_id: str | None = None
 
     @classmethod
     def create(cls, title: str, prompt: str, agent_id: str | None = None) -> "Task":

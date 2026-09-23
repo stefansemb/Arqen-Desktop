@@ -12,6 +12,7 @@ def test_scheduler_creates_due_task_once(tmp_path):
     assert len(scheduler.poll(current)) == 1
     assert scheduler.poll(current) == []
     assert store.list_tasks()[0].title == "Brief"
+    assert store.list_tasks()[0].schedule_id == "once"
 
 
 def test_scheduler_matches_simple_cron(tmp_path):

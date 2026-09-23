@@ -15,7 +15,7 @@ class MissionScheduler:
         for schedule in self.store.list_schedules():
             if not schedule.enabled or not self._due(schedule, current):
                 continue
-            task = Task(uuid4().hex, schedule.name, schedule.prompt, agent_id=schedule.agent_id)
+            task = Task(uuid4().hex, schedule.name, schedule.prompt, agent_id=schedule.agent_id, schedule_id=schedule.id)
             self.store.save_task(task)
             self.store.mark_schedule_run(schedule.id, current.isoformat())
             created.append(task)

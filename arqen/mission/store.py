@@ -30,7 +30,8 @@ class MissionStore:
                     id TEXT PRIMARY KEY, title TEXT NOT NULL, prompt TEXT NOT NULL,
                     status TEXT NOT NULL, agent_id TEXT, created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL, error TEXT, claimed_at TEXT,
-                    attempts INTEGER NOT NULL DEFAULT 0, max_attempts INTEGER NOT NULL DEFAULT 3
+                    attempts INTEGER NOT NULL DEFAULT 0, max_attempts INTEGER NOT NULL DEFAULT 3,
+                    schedule_id TEXT
                 );
                 CREATE TABLE IF NOT EXISTS events (
                     id TEXT PRIMARY KEY, task_id TEXT NOT NULL, kind TEXT NOT NULL,
@@ -63,6 +64,9 @@ class MissionStore:
                 db.execute("ALTER TABLE tasks ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0")
             if task_columns and "max_attempts" not in task_columns:
                 db.execute("ALTER TABLE tasks ADD COLUMN max_attempts INTEGER NOT NULL DEFAULT 3")
+            task_columns = {row["name"] for row in db.execute("PRAGMA table_info(tasks)").fetchall()}
+            if task_columns and "schedule_id" not in task_columns:
+                db.execute("ALTER TABLE tasks ADD COLUMN schedule_id TEXT")
 
     def save_agent(self, agent: Agent) -> None:
         with self._connect() as db:
@@ -82,10 +86,10 @@ class MissionStore:
 
     def save_task(self, task: Task) -> None:
         with self._connect() as db:
-            db.execute("INSERT OR REPLACE INTO tasks VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            db.execute("INSERT OR REPLACE INTO tasks VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                        (task.id, task.title, task.prompt, task.status, task.agent_id,
                         task.created_at, task.updated_at, task.error, task.claimed_at,
-                        task.attempts, task.max_attempts))
+                        task.attempts, task.max_attempts, task.schedule_id))
 
     def get_task(self, task_id: str) -> Task | None:
         with self._connect() as db:
@@ -178,7 +182,7 @@ class MissionStore:
 
     @staticmethod
     def _task(row: sqlite3.Row) -> Task:
-        return Task(row["id"], row["title"], row["prompt"], row["status"], row["agent_id"], row["created_at"], row["updated_at"], row["error"], row["claimed_at"], row["attempts"], row["max_attempts"])
+        return Task(row["id"], row["title"], row["prompt"], row["status"], row["agent_id"], row["created_at"], row["updated_at"], row["error"], row["claimed_at"], row["attempts"], row["max_attempts"], row["schedule_id"])
 
     def retry_task(self, task_id: str) -> bool:
         from arqen.mission.contracts import now

@@ -602,7 +602,7 @@ class ArqenWindow(QMainWindow):
             mode = schedule.cron or f"once: {schedule.run_at}"
             state = "ON" if schedule.enabled else "OFF"
             agent = self.mission_store.get_agent(schedule.agent_id) if schedule.agent_id else None
-            count = sum(1 for task in self.mission_store.list_tasks() if task.title == schedule.name)
+            count = sum(1 for task in self.mission_store.list_tasks() if task.schedule_id == schedule.id)
             last = schedule.last_run_at or "aldrig"
             item = QListWidgetItem(f"[{state}] {schedule.name} // {mode} // {agent.name if agent else 'Arqen'} // tasks: {count}")
             item.setData(Qt.ItemDataRole.UserRole, schedule.id)
@@ -791,7 +791,8 @@ class ArqenWindow(QMainWindow):
         events = self.mission_store.list_events(task.id)
         agent = self.mission_store.get_agent(task.agent_id) if task.agent_id else None
         agent_label = agent.name if agent else "Arqen standard"
-        lines = [f"{task.title}\nStatus: {task.status}\nAgent: {agent_label}\nAttempts: {task.attempts}/{task.max_attempts}\nError: {task.error or 'none'}\n\n{task.prompt}", "", "Events:"]
+        source = task.schedule_id or "manuell"
+        lines = [f"{task.title}\nStatus: {task.status}\nAgent: {agent_label}\nKälla: {source}\nAttempts: {task.attempts}/{task.max_attempts}\nError: {task.error or 'none'}\n\n{task.prompt}", "", "Events:"]
         lines.extend(f"{event.created_at}  {event.kind}: {event.message}" for event in events)
         self.mission_details.setPlainText("\n".join(lines))
 
