@@ -15,6 +15,7 @@ from arqen.config import paths
 from arqen.config.settings import load_mission_runtime_config
 from arqen.mission import Approval, Event, MissionRunner, MissionScheduler, MissionStore, Schedule, Task
 from arqen.mission.scheduler_worker import SchedulerWorker
+from arqen.mission.task_worker import TaskWorker
 
 
 class ArqenHTTPServer(ThreadingHTTPServer):
@@ -27,8 +28,11 @@ class ArqenHTTPServer(ThreadingHTTPServer):
         self.scheduler_worker.start()
         runtimes = self._mission_runtimes()
         self.mission_runner = MissionRunner(self.mission_store, application._engine_factory, runtimes)
+        self.task_worker = TaskWorker(self.mission_store, self.mission_runner)
+        self.task_worker.start()
 
     def server_close(self) -> None:
+        self.task_worker.stop()
         self.scheduler_worker.stop()
         super().server_close()
 
