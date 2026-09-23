@@ -895,7 +895,32 @@ class ArqenWindow(QMainWindow):
         self.mission_dock = dock
         mission_page = dock.widget()
         dock.setWidget(None)
-        self.mission_page_index = self.navigation_stack.addWidget(mission_page)
+        overview = QWidget()
+        overview_layout = QVBoxLayout(overview)
+        overview_layout.addWidget(QLabel("MISSION CONTROL", objectName="title"))
+        overview_layout.addWidget(QLabel("Orchestrator overview // monitor the system at a glance."))
+        overview_cards = QGridLayout()
+        self.mission_overview_cards: dict[str, QLabel] = {}
+        for index, (key, label) in enumerate((("agents", "AGENTS ONLINE"), ("tasks", "ACTIVE TASKS"), ("approvals", "PENDING APPROVALS"), ("workflows", "WORKFLOW RUNS"))):
+            card = QFrame(objectName="panel")
+            card_layout = QVBoxLayout(card)
+            card_layout.addWidget(QLabel(label))
+            value = QLabel("0", objectName="title")
+            card_layout.addWidget(value)
+            self.mission_overview_cards[key] = value
+            overview_cards.addWidget(card, index // 2, index % 2)
+        overview_layout.addLayout(overview_cards)
+        overview_layout.addWidget(QLabel("LATEST ACTIVITY", objectName="sectionLabel"))
+        self.mission_overview_activity = QListWidget()
+        overview_layout.addWidget(self.mission_overview_activity, 1)
+        overview_actions = QHBoxLayout()
+        for label, target in (("OPEN TASKS", "Tasks"), ("OPEN WORKFLOWS", "Workflows"), ("OPEN ACTIVITY", "Activity")):
+            button = QPushButton(label)
+            self._style_page_action(button, primary=target == "Tasks")
+            button.clicked.connect(lambda _, name=target: self._select_navigation(name))
+            overview_actions.addWidget(button)
+        overview_layout.addLayout(overview_actions)
+        self.mission_page_index = self.navigation_stack.addWidget(overview)
         dock.hide()
         self.refresh_mission_tasks()
         self.refresh_mission_approvals()
@@ -913,9 +938,17 @@ class ArqenWindow(QMainWindow):
         self.dashboard_cards["tasks"].setText(str(active))
         self.dashboard_cards["approvals"].setText(str(len(self.mission_store.list_approvals("pending"))))
         self.dashboard_cards["workflows"].setText(str(len(self.mission_store.list_workflow_runs())))
+        if hasattr(self, "mission_overview_cards"):
+            for key, value in self.dashboard_cards.items():
+                self.mission_overview_cards[key].setText(value.text())
         self.dashboard_activity.clear()
+        if hasattr(self, "mission_overview_activity"):
+            self.mission_overview_activity.clear()
         for event in self.mission_store.list_all_events(8):
-            self.dashboard_activity.addItem(f"[{event.kind}] {event.message}")
+            text = f"[{event.kind}] {event.message}"
+            self.dashboard_activity.addItem(text)
+            if hasattr(self, "mission_overview_activity"):
+                self.mission_overview_activity.addItem(text)
 
     def refresh_mission_activity(self) -> None:
         target = getattr(self, "activity_view_list", self.mission_activity)
