@@ -24,11 +24,11 @@ class ArqenHTTPServer(ThreadingHTTPServer):
         self.application = application
         self.token = token
         self.mission_store = MissionStore(paths.data_dir() / "mission.sqlite3")
-        self.scheduler_worker = SchedulerWorker(MissionScheduler(self.mission_store))
-        self.scheduler_worker.start()
         runtimes = self._mission_runtimes()
         self.mission_runner = MissionRunner(self.mission_store, application._engine_factory, runtimes)
         self.workflow_runner = WorkflowRunner(self.mission_store, self.mission_runner)
+        self.scheduler_worker = SchedulerWorker(MissionScheduler(self.mission_store, self.workflow_runner))
+        self.scheduler_worker.start()
         self.task_worker = TaskWorker(self.mission_store, self.mission_runner)
         self.task_worker.start()
 
@@ -174,7 +174,7 @@ class ArqenRequestHandler(BaseHTTPRequestHandler):
                 prompt = str(payload.get("prompt", "")).strip()
                 if not name or not prompt or (not payload.get("cron") and not payload.get("run_at")):
                     raise ValueError("name, prompt och cron eller run_at krävs.")
-                schedule = Schedule(uuid.uuid4().hex, name, prompt, payload.get("agent_id"), payload.get("cron"), payload.get("run_at"))
+                schedule = Schedule(uuid.uuid4().hex, name, prompt, payload.get("agent_id"), payload.get("cron"), payload.get("run_at"), True, workflow_id=payload.get("workflow_id"))
                 self.server.mission_store.save_schedule(schedule)
                 self._send_json(HTTPStatus.CREATED, {"data": self._as_json(schedule)})
                 return

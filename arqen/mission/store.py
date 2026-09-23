@@ -45,7 +45,7 @@ class MissionStore:
                 CREATE TABLE IF NOT EXISTS schedules (
                     id TEXT PRIMARY KEY, name TEXT NOT NULL, prompt TEXT NOT NULL,
                     agent_id TEXT, cron TEXT, run_at TEXT, enabled INTEGER NOT NULL,
-                    created_at TEXT NOT NULL, last_run_at TEXT
+                    created_at TEXT NOT NULL, last_run_at TEXT, workflow_id TEXT
                 );
                 CREATE TABLE IF NOT EXISTS workflows (
                     id TEXT PRIMARY KEY, name TEXT NOT NULL, steps TEXT NOT NULL,
@@ -65,6 +65,9 @@ class MissionStore:
             schedule_columns = {row["name"] for row in db.execute("PRAGMA table_info(schedules)").fetchall()}
             if schedule_columns and "last_run_at" not in schedule_columns:
                 db.execute("ALTER TABLE schedules ADD COLUMN last_run_at TEXT")
+            schedule_columns = {row["name"] for row in db.execute("PRAGMA table_info(schedules)").fetchall()}
+            if schedule_columns and "workflow_id" not in schedule_columns:
+                db.execute("ALTER TABLE schedules ADD COLUMN workflow_id TEXT")
             task_columns = {row["name"] for row in db.execute("PRAGMA table_info(tasks)").fetchall()}
             if task_columns and "claimed_at" not in task_columns:
                 db.execute("ALTER TABLE tasks ADD COLUMN claimed_at TEXT")
@@ -150,9 +153,9 @@ class MissionStore:
 
     def save_schedule(self, schedule: Schedule) -> None:
         with self._connect() as db:
-            db.execute("INSERT OR REPLACE INTO schedules VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            db.execute("INSERT OR REPLACE INTO schedules VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                        (schedule.id, schedule.name, schedule.prompt, schedule.agent_id,
-                       schedule.cron, schedule.run_at, int(schedule.enabled), schedule.created_at, schedule.last_run_at))
+                        schedule.cron, schedule.run_at, int(schedule.enabled), schedule.created_at, schedule.last_run_at, schedule.workflow_id))
 
     def save_workflow(self, workflow: Workflow) -> None:
         steps = [{"name": step.name, "prompt": step.prompt, "agent_id": step.agent_id} for step in workflow.steps]
@@ -192,7 +195,7 @@ class MissionStore:
     def list_schedules(self) -> list[Schedule]:
         with self._connect() as db:
             rows = db.execute("SELECT * FROM schedules ORDER BY name").fetchall()
-        return [Schedule(row["id"], row["name"], row["prompt"], row["agent_id"], row["cron"], row["run_at"], bool(row["enabled"]), row["created_at"], row["last_run_at"]) for row in rows]
+        return [Schedule(row["id"], row["name"], row["prompt"], row["agent_id"], row["cron"], row["run_at"], bool(row["enabled"]), row["created_at"], row["last_run_at"], row["workflow_id"]) for row in rows]
 
     def set_schedule_enabled(self, schedule_id: str, enabled: bool) -> None:
         with self._connect() as db:

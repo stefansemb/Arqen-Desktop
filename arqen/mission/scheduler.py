@@ -6,8 +6,9 @@ from arqen.mission.store import MissionStore
 
 
 class MissionScheduler:
-    def __init__(self, store: MissionStore) -> None:
+    def __init__(self, store: MissionStore, workflow_runner=None) -> None:
         self.store = store
+        self.workflow_runner = workflow_runner
 
     def poll(self, now: datetime | None = None) -> list[Task]:
         current = (now or datetime.now(timezone.utc)).replace(second=0, microsecond=0)
@@ -15,10 +16,17 @@ class MissionScheduler:
         for schedule in self.store.list_schedules():
             if not schedule.enabled or not self._due(schedule, current):
                 continue
-            task = Task(uuid4().hex, schedule.name, schedule.prompt, agent_id=schedule.agent_id, schedule_id=schedule.id)
-            self.store.save_task(task)
+            if schedule.workflow_id and self.workflow_runner:
+                workflow = self.store.get_workflow(schedule.workflow_id)
+                if workflow:
+                    self.workflow_runner.run(workflow.name, list(workflow.steps), workflow.id)
+                task = None
+            else:
+                task = Task(uuid4().hex, schedule.name, schedule.prompt, agent_id=schedule.agent_id, schedule_id=schedule.id)
+                self.store.save_task(task)
             self.store.mark_schedule_run(schedule.id, current.isoformat())
-            created.append(task)
+            if task:
+                created.append(task)
         return created
 
     @staticmethod

@@ -86,3 +86,4 @@ class Schedule:
     enabled: bool = True
     created_at: str = field(default_factory=now)
     last_run_at: str | None = None
+    workflow_id: str | None = None
