@@ -566,6 +566,9 @@ class ArqenWindow(QMainWindow):
             if label == "Schedules":
                 self._add_schedules_view()
                 continue
+            if label == "Agents":
+                self._add_agents_view()
+                continue
             page = QWidget()
             page_layout = QVBoxLayout(page)
             page_layout.addWidget(QLabel(label.upper(), objectName="title"))
@@ -643,6 +646,21 @@ class ArqenWindow(QMainWindow):
         page_layout.addLayout(row)
         self.navigation_stack.addWidget(page)
 
+    def _add_agents_view(self) -> None:
+        page = QWidget()
+        page_layout = QVBoxLayout(page)
+        page_layout.addWidget(QLabel("AGENTS", objectName="title"))
+        page_layout.addWidget(QLabel("Manage runtimes, tools and approval policies."))
+        self.mission_agents = QListWidget()
+        page_layout.addWidget(self.mission_agents, 1)
+        row = QHBoxLayout()
+        for label, handler in (("NEW AGENT", self._create_mission_agent), ("EDIT", self._edit_mission_agent), ("ENABLE/DISABLE", self._toggle_mission_agent)):
+            button = QPushButton(label)
+            button.clicked.connect(handler)
+            row.addWidget(button)
+        page_layout.addLayout(row)
+        self.navigation_stack.addWidget(page)
+
     def _add_navigation_button(self, layout: QVBoxLayout, label: str, icon: str) -> None:
         button = QPushButton(f"{icon}  {label}")
         button.setObjectName("navButton")
@@ -712,8 +730,8 @@ class ArqenWindow(QMainWindow):
         schedule_row.addWidget(toggle_schedule)
         panel_layout.addLayout(schedule_row)
         panel_layout.addWidget(QLabel("AGENTS"))
-        self.mission_agents = QListWidget()
-        panel_layout.addWidget(self.mission_agents)
+        legacy_agents = QListWidget()
+        panel_layout.addWidget(legacy_agents)
         agent_row = QHBoxLayout()
         new_agent = QPushButton("NEW AGENT")
         edit_agent = QPushButton("EDIT")
