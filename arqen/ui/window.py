@@ -1114,7 +1114,7 @@ class ArqenWindow(QMainWindow):
         allowed_tools = tuple(item.strip() for item in tools_text.split(",") if item.strip())
         unknown = sorted(set(allowed_tools) - set(available))
         if unknown:
-            QMessageBox.warning(self, "Mission Control", f"Okända verktyg: {', '.join(unknown)}")
+            QMessageBox.warning(self, "Mission Control", f"Unknown tools: {', '.join(unknown)}")
             return
         approvals_text, accepted = QInputDialog.getText(self, "New agent", "Tools requiring approval (comma-separated):")
         if not accepted:
@@ -1162,7 +1162,7 @@ class ArqenWindow(QMainWindow):
         allowed_tools = tuple(value.strip() for value in tools_text.split(",") if value.strip())
         unknown = sorted(set(allowed_tools) - available)
         if unknown:
-            QMessageBox.warning(self, "Mission Control", f"Okända verktyg: {', '.join(unknown)}")
+            QMessageBox.warning(self, "Mission Control", f"Unknown tools: {', '.join(unknown)}")
             return
         approvals_text, accepted = QInputDialog.getText(self, "Edit agent", "Tools requiring approval:", text=", ".join(agent.approval_tools))
         if not accepted:
@@ -1986,7 +1986,7 @@ class ArqenWindow(QMainWindow):
         fallback_form.addRow("Fallback-timeout (s)", fallback_timeout)
         provider_info = QLabel(self.provider_overview(fallback_enabled.isChecked()))
         provider_info.setWordWrap(True)
-        fallback_form.addRow("Providerstatus", provider_info)
+        fallback_form.addRow("Provider status", provider_info)
         stats_button = QPushButton("VIEW PROVIDER STATISTICS")
         stats_button.setObjectName("secondaryButton")
         stats_button.clicked.connect(self.show_provider_metrics)
@@ -2102,26 +2102,26 @@ class ArqenWindow(QMainWindow):
         model = getattr(self.engine.provider, "model", "") or "unknown model"
         used = getattr(self.engine.provider, "fallback_used", False)
         if fallback_enabled is True and not used:
-            fallback = "aktiverad, inte använd ännu"
+            fallback = "enabled, not used yet"
         elif fallback_enabled is False:
-            fallback = "avstängd"
+            fallback = "disabled"
         else:
-            fallback = "används nu" if used else "inte aktiverad"
-        elapsed = f"{self.last_response_ms / 1000:.1f} s" if self.last_response_ms is not None else "ingen mätning ännu"
+            fallback = "currently used" if used else "not enabled"
+        elapsed = f"{self.last_response_ms / 1000:.1f} s" if self.last_response_ms is not None else "no measurement yet"
         metrics = self.provider_metrics._load().get(f"{provider.lower()}/{model}", {})
         avg_ms = metrics.get("total_ms", 0) / metrics.get("requests", 1)
         return (
             f"Aktiv: {provider} / {model}\n"
             f"Fallback: {fallback}\n"
             f"Senaste svarstid: {elapsed}\n"
-            f"Fallbackväxlingar: {self.fallback_count}\n"
+            f"Fallback switches: {self.fallback_count}\n"
             f"Historik: {metrics.get('requests', 0)} svar, genomsnitt {avg_ms / 1000:.1f} s"
         )
 
     def show_provider_metrics(self) -> None:
         metrics = self.provider_metrics._load()
         if not metrics:
-            text = "Ingen providerstatistik finns ännu."
+            text = "No provider statistics available yet."
         else:
             rows = []
             sorted_metrics = sorted(
@@ -2134,22 +2134,22 @@ class ArqenWindow(QMainWindow):
                 success_rate = (item.get("successes", 0) / requests * 100) if requests else 0
                 rows.append(
                     f"{key}\n"
-                    f"  Svar: {requests} | Lyckade: {item.get('successes', 0)} | Fel: {item.get('errors', 0)} | Lyckandegrad: {success_rate:.0f}%\n"
+                    f"  Requests: {requests} | Successful: {item.get('successes', 0)} | Errors: {item.get('errors', 0)} | Success rate: {success_rate:.0f}%\n"
                     f"  Genomsnitt: {average:.1f} s | Fallback: {item.get('fallbacks', 0)}"
                 )
             text = "\n\n".join(rows)
-        QMessageBox.information(self, "Providerstatistik", text)
+        QMessageBox.information(self, "Provider statistics", text)
 
     def reset_provider_metrics(self) -> None:
         answer = QMessageBox.question(
             self,
-            "Nollställ statistik",
-            "Vill du ta bort all sparad providerstatistik?",
+            "Reset statistics",
+            "Delete all saved provider statistics?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if answer == QMessageBox.StandardButton.Yes:
             self.provider_metrics.reset()
-            QMessageBox.information(self, "Providerstatistik", "Providerstatistiken är nollställd.")
+            QMessageBox.information(self, "Provider statistics", "Provider statistics have been reset.")
 
     def choose_workspace(self, dialog: QDialog, field: QLineEdit) -> None:
         chosen = QFileDialog.getExistingDirectory(dialog, "Choose workspace", field.text() or str(APP_ROOT))
@@ -2173,7 +2173,7 @@ class ArqenWindow(QMainWindow):
             save_provider_config(config)
             chosen = workspace.strip()
             if chosen and not Path(chosen).expanduser().is_dir():
-                raise ValueError(f"Arbetskatalogen finns inte: {chosen}")
+                raise ValueError(f"Workspace folder does not exist: {chosen}")
             save_workspace_root(chosen)
             self.provider_label = config.name
             self.profile_name = profile_name
@@ -2214,7 +2214,7 @@ class ArqenWindow(QMainWindow):
                 selected = models.index(current) if current in models else 0
                 model_box.setCurrentIndex(selected)
         except Exception as exc:
-            QMessageBox.warning(self, "Modeller kunde inte hämtas", str(exc))
+            QMessageBox.warning(self, "Could not fetch models", str(exc))
 
     def configure_provider_fields(self, provider: str, model_box: QComboBox, base_url: QLineEdit) -> None:
         defaults = {
