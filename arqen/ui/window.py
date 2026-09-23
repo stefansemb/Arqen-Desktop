@@ -49,7 +49,7 @@ from arqen.ui.theme import CyberpunkGreenTheme
 from arqen.core.provider_metrics import ProviderMetrics
 from arqen.tools.speech import set_audio_level_callback
 from arqen.tools.microphone import MicrophoneRecorder
-from arqen.mission import Agent, MissionRunner, MissionStore, Schedule, Task
+from arqen.mission import Agent, MissionRunner, MissionStore, Schedule, Task, Workflow, WorkflowRunner, WorkflowStep
 from uuid import uuid4
 
 
@@ -533,10 +533,22 @@ class ArqenWindow(QMainWindow):
         """Create the first functional Mission Control surface."""
         self.mission_store = MissionStore(data_dir() / "mission.sqlite3")
         self.mission_runner = MissionRunner(self.mission_store, lambda: self.engine)
+        self.workflow_runner = WorkflowRunner(self.mission_store, self.mission_runner)
         dock = QDockWidget("MISSION CONTROL", self)
         dock.setObjectName("missionControlDock")
         panel = QWidget()
         panel_layout = QVBoxLayout(panel)
+        panel_layout.addWidget(QLabel("WORKFLOWS"))
+        self.mission_workflows = QListWidget()
+        panel_layout.addWidget(self.mission_workflows)
+        workflow_row = QHBoxLayout()
+        new_workflow = QPushButton("NYTT WORKFLOW")
+        run_workflow = QPushButton("KÖR WORKFLOW")
+        new_workflow.clicked.connect(self._create_mission_workflow)
+        run_workflow.clicked.connect(self._run_mission_workflow)
+        workflow_row.addWidget(new_workflow)
+        workflow_row.addWidget(run_workflow)
+        panel_layout.addLayout(workflow_row)
         panel_layout.addWidget(QLabel("SCHEMAN"))
         self.mission_schedules = QListWidget()
         panel_layout.addWidget(self.mission_schedules)
@@ -595,6 +607,46 @@ class ArqenWindow(QMainWindow):
         self.refresh_mission_approvals()
         self.refresh_mission_agents()
         self.refresh_mission_schedules()
+        self.refresh_mission_workflows()
+
+    def refresh_mission_workflows(self) -> None:
+        self.mission_workflows.clear()
+        for workflow in self.mission_store.list_workflows():
+            item = QListWidgetItem(f"[{len(workflow.steps)} steg] {workflow.name}")
+            item.setData(Qt.ItemDataRole.UserRole, workflow.id)
+            item.setToolTip("\n".join(f"{step.name} → {step.agent_id or 'Arqen'}" for step in workflow.steps))
+            self.mission_workflows.addItem(item)
+
+    def _create_mission_workflow(self) -> None:
+        name, accepted = QInputDialog.getText(self, "Nytt workflow", "Namn:")
+        if not accepted or not name.strip():
+            return
+        raw, accepted = QInputDialog.getMultiLineText(self, "Nytt workflow", "Ett steg per rad: namn | prompt | agent-id (valfritt)")
+        if not accepted:
+            return
+        steps = []
+        for line in raw.splitlines():
+            parts = [part.strip() for part in line.split("|", 2)]
+            if len(parts) >= 2 and parts[0] and parts[1]:
+                steps.append(WorkflowStep(parts[0], parts[1], parts[2] if len(parts) == 3 and parts[2] else None))
+        if not steps:
+            QMessageBox.warning(self, "Mission Control", "Minst ett giltigt steg krävs.")
+            return
+        self.mission_store.save_workflow(Workflow(uuid4().hex, name.strip(), tuple(steps)))
+        self.refresh_mission_workflows()
+
+    def _run_mission_workflow(self) -> None:
+        item = self.mission_workflows.currentItem()
+        if item is None:
+            return
+        workflow = next((entry for entry in self.mission_store.list_workflows() if entry.id == item.data(Qt.ItemDataRole.UserRole)), None)
+        if workflow is None:
+            return
+        try:
+            self.workflow_runner.run(workflow.name, list(workflow.steps))
+        except Exception as exc:
+            QMessageBox.warning(self, "Mission Control", str(exc))
+        self.refresh_mission_tasks()
 
     def refresh_mission_schedules(self) -> None:
         self.mission_schedules.clear()
