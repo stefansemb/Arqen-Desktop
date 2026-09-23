@@ -1746,23 +1746,27 @@ class ArqenWindow(QMainWindow):
         return result[:-4] if result.endswith("<br>") else result
 
     def refresh_sessions(self) -> None:
-        self.session_list.clear()
-        selector = getattr(self, "chat_session_selector", None)
-        if selector is not None:
-            selector.blockSignals(True)
-            selector.clear()
-        for session in self.engine.session_store.list_sessions():
-            item = QListWidgetItem(session.title)
-            item.setData(Qt.ItemDataRole.UserRole, session.session_id)
-            self.session_list.addItem(item)
+        try:
+            self.session_list.clear()
+            selector = getattr(self, "chat_session_selector", None)
             if selector is not None:
-                selector.addItem(session.title, session.session_id)
-        if selector is not None:
-            current_id = self.engine.session.session_id if self.engine.session else None
-            current_index = selector.findData(current_id)
-            if current_index >= 0:
-                selector.setCurrentIndex(current_index)
-            selector.blockSignals(False)
+                selector.blockSignals(True)
+                selector.clear()
+            for session in self.engine.session_store.list_sessions():
+                item = QListWidgetItem(session.title)
+                item.setData(Qt.ItemDataRole.UserRole, session.session_id)
+                self.session_list.addItem(item)
+                if selector is not None:
+                    selector.addItem(session.title, session.session_id)
+            if selector is not None:
+                current_id = self.engine.session.session_id if self.engine.session else None
+                current_index = selector.findData(current_id)
+                if current_index >= 0:
+                    selector.setCurrentIndex(current_index)
+                selector.blockSignals(False)
+        except RuntimeError:
+            # A late response callback may run after Qt has deleted the chat UI.
+            return
 
     def _load_selected_chat_from_bar(self, index: int) -> None:
         selector = getattr(self, "chat_session_selector", None)
