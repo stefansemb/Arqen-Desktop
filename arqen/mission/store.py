@@ -29,7 +29,7 @@ class MissionStore:
                 CREATE TABLE IF NOT EXISTS tasks (
                     id TEXT PRIMARY KEY, title TEXT NOT NULL, prompt TEXT NOT NULL,
                     status TEXT NOT NULL, agent_id TEXT, created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL, error TEXT
+                    updated_at TEXT NOT NULL, error TEXT, claimed_at TEXT
                 );
                 CREATE TABLE IF NOT EXISTS events (
                     id TEXT PRIMARY KEY, task_id TEXT NOT NULL, kind TEXT NOT NULL,
@@ -54,6 +54,9 @@ class MissionStore:
             schedule_columns = {row["name"] for row in db.execute("PRAGMA table_info(schedules)").fetchall()}
             if schedule_columns and "last_run_at" not in schedule_columns:
                 db.execute("ALTER TABLE schedules ADD COLUMN last_run_at TEXT")
+            task_columns = {row["name"] for row in db.execute("PRAGMA table_info(tasks)").fetchall()}
+            if task_columns and "claimed_at" not in task_columns:
+                db.execute("ALTER TABLE tasks ADD COLUMN claimed_at TEXT")
 
     def save_agent(self, agent: Agent) -> None:
         with self._connect() as db:
@@ -73,9 +76,9 @@ class MissionStore:
 
     def save_task(self, task: Task) -> None:
         with self._connect() as db:
-            db.execute("INSERT OR REPLACE INTO tasks VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            db.execute("INSERT OR REPLACE INTO tasks VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                        (task.id, task.title, task.prompt, task.status, task.agent_id,
-                        task.created_at, task.updated_at, task.error))
+                        task.created_at, task.updated_at, task.error, task.claimed_at))
 
     def get_task(self, task_id: str) -> Task | None:
         with self._connect() as db:
@@ -96,15 +99,15 @@ class MissionStore:
     def update_task(self, task_id: str, status: TaskStatus, error: str | None = None) -> None:
         from arqen.mission.contracts import now
         with self._connect() as db:
-            db.execute("UPDATE tasks SET status = ?, updated_at = ?, error = ? WHERE id = ?",
-                       (status, now(), error, task_id))
+            db.execute("UPDATE tasks SET status = ?, updated_at = ?, error = ?, claimed_at = CASE WHEN ? = 'running' THEN claimed_at ELSE NULL END WHERE id = ?",
+                       (status, now(), error, status, task_id))
 
     def claim_task(self, task_id: str) -> bool:
         from arqen.mission.contracts import now
         with self._connect() as db:
             result = db.execute(
-                "UPDATE tasks SET status = 'running', updated_at = ?, error = NULL WHERE id = ? AND status = 'queued'",
-                (now(), task_id),
+                "UPDATE tasks SET status = 'running', updated_at = ?, error = NULL, claimed_at = ? WHERE id = ? AND status = 'queued'",
+                (now(), now(), task_id),
             )
         return result.rowcount == 1
 
@@ -168,7 +171,20 @@ class MissionStore:
 
     @staticmethod
     def _task(row: sqlite3.Row) -> Task:
-        return Task(row["id"], row["title"], row["prompt"], row["status"], row["agent_id"], row["created_at"], row["updated_at"], row["error"])
+        return Task(row["id"], row["title"], row["prompt"], row["status"], row["agent_id"], row["created_at"], row["updated_at"], row["error"], row["claimed_at"])
+
+    def recover_stale_tasks(self, max_age_seconds: float, now_value: str | None = None) -> int:
+        from datetime import datetime, timezone
+        current = datetime.fromisoformat(now_value) if now_value else datetime.now(timezone.utc)
+        changed = 0
+        for task in self.list_tasks("running"):
+            if not task.claimed_at:
+                continue
+            claimed = datetime.fromisoformat(task.claimed_at)
+            if (current - claimed).total_seconds() > max_age_seconds:
+                self.update_task(task.id, "failed", "Task återställdes efter timeout.")
+                changed += 1
+        return changed
 
     @staticmethod
     def _agent(row: sqlite3.Row) -> Agent:

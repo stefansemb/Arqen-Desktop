@@ -27,6 +27,7 @@ class TaskWorker:
 
     def _run(self) -> None:
         while not self._stop.is_set():
+            self.store.recover_stale_tasks(3600)
             for task in self.store.list_tasks("queued"):
                 if self._stop.is_set():
                     break

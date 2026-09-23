@@ -32,6 +32,7 @@ class Task:
     created_at: str = field(default_factory=now)
     updated_at: str = field(default_factory=now)
     error: str | None = None
+    claimed_at: str | None = None
 
     @classmethod
     def create(cls, title: str, prompt: str, agent_id: str | None = None) -> "Task":
