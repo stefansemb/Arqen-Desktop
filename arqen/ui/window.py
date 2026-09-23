@@ -587,7 +587,8 @@ class ArqenWindow(QMainWindow):
             item = QListWidgetItem(f"[{status['status'].upper()}] {agent.name} // {agent.runtime}")
             item.setData(Qt.ItemDataRole.UserRole, agent.id)
             tools = ", ".join(agent.allowed_tools) or "inga verktyg"
-            item.setToolTip(f"{status.get('detail', status.get('status', ''))}\nTillåtna verktyg: {tools}")
+            approvals = ", ".join(agent.approval_tools) or "inga"
+            item.setToolTip(f"{status.get('detail', status.get('status', ''))}\nTillåtna verktyg: {tools}\nKräver approval: {approvals}")
             self.mission_agents.addItem(item)
 
     def _create_mission_agent(self) -> None:
@@ -614,7 +615,15 @@ class ArqenWindow(QMainWindow):
         if unknown:
             QMessageBox.warning(self, "Mission Control", f"Okända verktyg: {', '.join(unknown)}")
             return
-        self.mission_store.save_agent(Agent(agent_id.strip(), name.strip(), role.strip(), runtime, True, allowed_tools))
+        approvals_text, accepted = QInputDialog.getText(self, "Ny agent", "Verktyg som kräver approval (kommaseparerade):")
+        if not accepted:
+            return
+        approval_tools = tuple(value.strip() for value in approvals_text.split(",") if value.strip())
+        invalid_approvals = sorted(set(approval_tools) - set(allowed_tools))
+        if invalid_approvals:
+            QMessageBox.warning(self, "Mission Control", "Approval-verktyg måste finnas i allowlisten.")
+            return
+        self.mission_store.save_agent(Agent(agent_id.strip(), name.strip(), role.strip(), runtime, True, allowed_tools, approval_tools))
         self.refresh_mission_agents()
 
     def _toggle_mission_agent(self) -> None:
@@ -654,7 +663,14 @@ class ArqenWindow(QMainWindow):
         if unknown:
             QMessageBox.warning(self, "Mission Control", f"Okända verktyg: {', '.join(unknown)}")
             return
-        self.mission_store.save_agent(Agent(agent.id, name.strip(), role.strip(), runtime, agent.enabled, allowed_tools))
+        approvals_text, accepted = QInputDialog.getText(self, "Redigera agent", "Verktyg som kräver approval:", text=", ".join(agent.approval_tools))
+        if not accepted:
+            return
+        approval_tools = tuple(value.strip() for value in approvals_text.split(",") if value.strip())
+        if set(approval_tools) - set(allowed_tools):
+            QMessageBox.warning(self, "Mission Control", "Approval-verktyg måste finnas i allowlisten.")
+            return
+        self.mission_store.save_agent(Agent(agent.id, name.strip(), role.strip(), runtime, agent.enabled, allowed_tools, approval_tools))
         self.refresh_mission_agents()
 
     def refresh_mission_tasks(self) -> None:
