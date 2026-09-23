@@ -627,6 +627,10 @@ class ArqenWindow(QMainWindow):
         self.mission_details = QTextEdit(readOnly=True)
         self.mission_details.setPlaceholderText("Select a task to view status and events.")
         page_layout.addWidget(self.mission_details)
+        page_layout.addWidget(QLabel("PENDING APPROVALS", objectName="sectionLabel"))
+        self.mission_approvals = QListWidget()
+        self.mission_approvals.itemClicked.connect(self._show_selected_approval)
+        page_layout.addWidget(self.mission_approvals)
         row = QHBoxLayout()
         for index, (label, handler) in enumerate((("NEW TASK", self._create_mission_task), ("RUN SELECTED TASK", self._run_mission_task), ("RETRY", self._retry_mission_task))):
             button = QPushButton(label)
@@ -634,6 +638,13 @@ class ArqenWindow(QMainWindow):
             button.clicked.connect(handler)
             row.addWidget(button)
         page_layout.addLayout(row)
+        approval_row = QHBoxLayout()
+        for index, (label, status) in enumerate((("APPROVE", "approved"), ("REJECT", "rejected"))):
+            button = QPushButton(label)
+            self._style_page_action(button, primary=index == 0)
+            button.clicked.connect(lambda _, value=status: self._decide_mission_approval(value))
+            approval_row.addWidget(button)
+        page_layout.addLayout(approval_row)
         self.navigation_stack.addWidget(page)
 
     def _add_workflows_view(self) -> None:
@@ -830,9 +841,9 @@ class ArqenWindow(QMainWindow):
         legacy_tasks.itemClicked.connect(self._show_mission_task)
         panel_layout.addWidget(legacy_tasks, 1)
         panel_layout.addWidget(QLabel("PENDING APPROVALS"))
-        self.mission_approvals = QListWidget()
-        self.mission_approvals.itemClicked.connect(self._show_selected_approval)
-        panel_layout.addWidget(self.mission_approvals)
+        legacy_approvals = QListWidget()
+        legacy_approvals.itemClicked.connect(self._show_selected_approval)
+        panel_layout.addWidget(legacy_approvals)
         approval_row = QHBoxLayout()
         approve = QPushButton("APPROVE")
         reject = QPushButton("REJECT")
