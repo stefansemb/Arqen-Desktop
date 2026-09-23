@@ -533,6 +533,28 @@ class ArqenWindow(QMainWindow):
         content_layout.addLayout(input_row)
         layout.addWidget(sidebar)
         self.navigation_stack = QStackedWidget()
+        dashboard = QWidget()
+        dashboard_layout = QVBoxLayout(dashboard)
+        dashboard_layout.addWidget(QLabel("DASHBOARD", objectName="title"))
+        dashboard_layout.addWidget(QLabel("Mission Control // system overview"))
+        cards = QGridLayout()
+        self.dashboard_cards: dict[str, QLabel] = {}
+        for index, (key, label) in enumerate((("agents", "AGENTS"), ("tasks", "ACTIVE TASKS"), ("approvals", "APPROVALS"), ("workflows", "WORKFLOW RUNS"))):
+            card = QFrame(objectName="panel")
+            card_layout = QVBoxLayout(card)
+            card_layout.addWidget(QLabel(label))
+            value = QLabel("0", objectName="title")
+            card_layout.addWidget(value)
+            self.dashboard_cards[key] = value
+            cards.addWidget(card, index // 2, index % 2)
+        dashboard_layout.addLayout(cards)
+        dashboard_layout.addWidget(QLabel("SENASTE AKTIVITET", objectName="title"))
+        self.dashboard_activity = QListWidget()
+        dashboard_layout.addWidget(self.dashboard_activity, 1)
+        open_chat = QPushButton("ÖPPNA ARQEN CHAT")
+        open_chat.clicked.connect(lambda: self.navigation_stack.setCurrentIndex(1))
+        dashboard_layout.addWidget(open_chat)
+        self.navigation_stack.addWidget(dashboard)
         self.navigation_stack.addWidget(content)
         for label in ("Tasks", "Workflows", "Agents", "Activity", "Memory", "Content"):
             page = QWidget()
@@ -580,7 +602,7 @@ class ArqenWindow(QMainWindow):
                 "QPushButton { background: transparent; color: #8d969d; border: none; "
                 "text-align: left; padding: 7px 8px; border-radius: 5px; }"
             )
-        pages = {"Dashboard": 0, "Tasks": 1, "Workflows": 2, "Agents": 3, "Activity": 4, "Memory": 5, "Content": 6}
+        pages = {"Dashboard": 0, "Tasks": 2, "Workflows": 3, "Agents": 4, "Activity": 5, "Memory": 6, "Content": 7}
         if name in pages and hasattr(self, "navigation_stack"):
             self.navigation_stack.setCurrentIndex(pages[name])
 
@@ -616,6 +638,7 @@ class ArqenWindow(QMainWindow):
         self.mission_activity_timer = QTimer(self)
         self.mission_activity_timer.setInterval(2000)
         self.mission_activity_timer.timeout.connect(self.refresh_mission_activity)
+        self.mission_activity_timer.timeout.connect(self.refresh_dashboard)
         self.mission_activity_timer.start()
         panel_layout.addWidget(QLabel("SCHEMAN"))
         self.mission_schedules = QListWidget()
@@ -678,6 +701,19 @@ class ArqenWindow(QMainWindow):
         self.refresh_mission_schedules()
         self.refresh_mission_workflows()
         self.refresh_mission_activity()
+        self.refresh_dashboard()
+
+    def refresh_dashboard(self) -> None:
+        if not hasattr(self, "dashboard_cards"):
+            return
+        self.dashboard_cards["agents"].setText(str(len(self.mission_store.list_agents())))
+        active = sum(1 for task in self.mission_store.list_tasks() if task.status in {"queued", "running", "waiting_approval"})
+        self.dashboard_cards["tasks"].setText(str(active))
+        self.dashboard_cards["approvals"].setText(str(len(self.mission_store.list_approvals("pending"))))
+        self.dashboard_cards["workflows"].setText(str(len(self.mission_store.list_workflow_runs())))
+        self.dashboard_activity.clear()
+        for event in self.mission_store.list_all_events(8):
+            self.dashboard_activity.addItem(f"[{event.kind}] {event.message}")
 
     def refresh_mission_activity(self) -> None:
         self.mission_activity.clear()
