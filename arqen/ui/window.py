@@ -1028,11 +1028,14 @@ class ArqenWindow(QMainWindow):
         if workflow is None:
             return
         try:
-            self.workflow_runner.run(workflow.name, list(workflow.steps))
+            self.workflow_runner.run(workflow.name, list(workflow.steps), workflow_id=workflow.id)
         except Exception as exc:
             QMessageBox.warning(self, "Mission Control", str(exc))
         self.refresh_mission_tasks()
         self.refresh_mission_workflow_runs()
+        self.refresh_mission_approvals()
+        self.refresh_mission_activity()
+        self.refresh_dashboard()
 
     def _resume_mission_workflow(self) -> None:
         item = self.mission_workflow_runs.currentItem()
