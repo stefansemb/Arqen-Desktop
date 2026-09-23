@@ -16,6 +16,11 @@ class FakeEngine:
         return self.result
 
 
+class Runtime:
+    def run(self, prompt):
+        return "klart"
+
+
 def test_runner_executes_and_records_lifecycle(tmp_path):
     store = MissionStore(tmp_path / "mission.sqlite3")
     task = Task.create("Test", "Gör jobbet")
@@ -49,11 +54,11 @@ def test_runner_accepts_a_runtime_adapter(tmp_path):
     task = Task.create("Test", "Gör jobbet")
     store.save_task(task)
 
-    class Runtime:
+    class EchoRuntime:
         def run(self, prompt):
             return f"runtime: {prompt}"
 
-    assert MissionRunner(store, Runtime()).run(task.id) == "runtime: Gör jobbet"
+    assert MissionRunner(store, EchoRuntime()).run(task.id) == "runtime: Gör jobbet"
 
 
 def test_runner_uses_runtime_for_task_agent(tmp_path):
