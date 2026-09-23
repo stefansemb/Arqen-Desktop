@@ -63,3 +63,26 @@ class WorkflowRunner:
         else:
             self.store.save_workflow_run(WorkflowRun(run.id, run.workflow_id, "completed", len(results), tuple(results)))
         return results
+
+    def resume(self, run_id: str) -> list[str]:
+        run = self.store.get_workflow_run(run_id)
+        if run is None or run.status != "waiting_approval":
+            raise ValueError("Workflow-run kan inte återupptas.")
+        workflow = self.store.get_workflow(run.workflow_id)
+        if workflow is None:
+            raise ValueError("Workflow-definitionen saknas.")
+        previous = run.results[-1] if run.results else ""
+        results = list(run.results)
+        for step in workflow.steps[run.current_step:]:
+            task = Task(uuid4().hex, f"{workflow.name}: {step.name}", step.prompt.replace("{{previous}}", previous), agent_id=step.agent_id)
+            self.store.save_task(task)
+            result = self.runner.run(task.id)
+            results.append(result)
+            previous = result
+            saved = self.store.get_task(task.id)
+            status = "waiting_approval" if saved.status == "waiting_approval" else "failed" if saved.status != "completed" else "running"
+            self.store.save_workflow_run(WorkflowRun(run.id, run.workflow_id, status, len(results), tuple(results)))
+            if saved.status != "completed":
+                return results
+        self.store.save_workflow_run(WorkflowRun(run.id, run.workflow_id, "completed", len(results), tuple(results)))
+        return results

@@ -99,6 +99,11 @@ class ArqenRequestHandler(BaseHTTPRequestHandler):
                 workflow_id = path.removeprefix("/api/v1/mission/workflows/").removesuffix("/runs").strip("/")
                 self._send_json(HTTPStatus.OK, {"data": [self._as_json(item) for item in self.server.mission_store.list_workflow_runs(workflow_id)]})
                 return
+            if path.startswith("/api/v1/mission/runs/") and path.endswith("/resume"):
+                run_id = path.removeprefix("/api/v1/mission/runs/").removesuffix("/resume").strip("/")
+                results = self.workflow_runner.resume(run_id)
+                self._send_json(HTTPStatus.OK, {"data": {"run_id": run_id, "results": results}})
+                return
             if path.startswith("/api/v1/mission/tasks/"):
                 task_id = path.removeprefix("/api/v1/mission/tasks/").strip("/")
                 if not task_id or "/" in task_id:

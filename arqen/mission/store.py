@@ -165,6 +165,9 @@ class MissionStore:
             rows = db.execute("SELECT * FROM workflows ORDER BY name").fetchall()
         return [Workflow(row["id"], row["name"], tuple(WorkflowStep(item["name"], item["prompt"], item.get("agent_id")) for item in json.loads(row["steps"])), bool(row["enabled"])) for row in rows]
 
+    def get_workflow(self, workflow_id: str) -> Workflow | None:
+        return next((item for item in self.list_workflows() if item.id == workflow_id), None)
+
     def save_workflow_run(self, run: WorkflowRun) -> None:
         with self._connect() as db:
             db.execute("INSERT OR REPLACE INTO workflow_runs VALUES (?, ?, ?, ?, ?)",
@@ -180,6 +183,11 @@ class MissionStore:
         with self._connect() as db:
             rows = db.execute(query, params).fetchall()
         return [WorkflowRun(row["id"], row["workflow_id"], row["status"], row["current_step"], tuple(json.loads(row["results"]))) for row in rows]
+
+    def get_workflow_run(self, run_id: str) -> WorkflowRun | None:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM workflow_runs WHERE id = ?", (run_id,)).fetchone()
+        return WorkflowRun(row["id"], row["workflow_id"], row["status"], row["current_step"], tuple(json.loads(row["results"]))) if row else None
 
     def list_schedules(self) -> list[Schedule]:
         with self._connect() as db:
