@@ -19,8 +19,11 @@ class ArqenRuntime:
     def __init__(self, engine_factory: Callable[[], ConversationEngine]) -> None:
         self.engine_factory = engine_factory
 
-    def run(self, prompt: str) -> str:
-        return self.engine_factory().respond(prompt)
+    def run(self, prompt: str, allowed_tools: tuple[str, ...] | None = None) -> str:
+        engine = self.engine_factory()
+        if allowed_tools:
+            engine.tools._tools = {name: tool for name, tool in engine.tools._tools.items() if name in allowed_tools}
+        return engine.respond(prompt)
 
 
 class HermesRuntime:

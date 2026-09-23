@@ -23,7 +23,7 @@ class MissionStore:
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS agents (
                     id TEXT PRIMARY KEY, name TEXT NOT NULL, role TEXT NOT NULL,
-                    runtime TEXT NOT NULL, enabled INTEGER NOT NULL
+                    runtime TEXT NOT NULL, enabled INTEGER NOT NULL, allowed_tools TEXT NOT NULL DEFAULT '[]'
                 );
                 CREATE TABLE IF NOT EXISTS tasks (
                     id TEXT PRIMARY KEY, title TEXT NOT NULL, prompt TEXT NOT NULL,
@@ -39,11 +39,14 @@ class MissionStore:
                     payload TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL
                 );
             """)
+            columns = {row["name"] for row in db.execute("PRAGMA table_info(agents)").fetchall()}
+            if "allowed_tools" not in columns:
+                db.execute("ALTER TABLE agents ADD COLUMN allowed_tools TEXT NOT NULL DEFAULT '[]'")
 
     def save_agent(self, agent: Agent) -> None:
         with self._connect() as db:
             db.execute("INSERT OR REPLACE INTO agents VALUES (?, ?, ?, ?, ?)",
-                       (agent.id, agent.name, agent.role, agent.runtime, int(agent.enabled)))
+                       (agent.id, agent.name, agent.role, agent.runtime, int(agent.enabled), json.dumps(agent.allowed_tools)))
 
     def get_agent(self, agent_id: str) -> Agent | None:
         with self._connect() as db:
@@ -128,7 +131,7 @@ class MissionStore:
 
     @staticmethod
     def _agent(row: sqlite3.Row) -> Agent:
-        return Agent(row["id"], row["name"], row["role"], row["runtime"], bool(row["enabled"]))
+        return Agent(row["id"], row["name"], row["role"], row["runtime"], bool(row["enabled"]), tuple(json.loads(row["allowed_tools"])))
 
     @staticmethod
     def _approval(row: sqlite3.Row) -> Approval:

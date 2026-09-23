@@ -25,7 +25,11 @@ class MissionRunner:
         self.store.update_task(task.id, "running")
         self._event(task, "started", "Task started")
         try:
-            result = runtime.run(task.prompt)
+            if isinstance(runtime, ArqenRuntime):
+                agent = self.store.get_agent(task.agent_id) if task.agent_id else None
+                result = runtime.run(task.prompt, agent.allowed_tools if agent and agent.allowed_tools else None)
+            else:
+                result = runtime.run(task.prompt)
         except Exception as exc:
             self.store.update_task(task.id, "failed", str(exc))
             self._event(task, "failed", str(exc))

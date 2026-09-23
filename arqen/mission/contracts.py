@@ -18,6 +18,7 @@ class Agent:
     role: str
     runtime: str = "arqen"
     enabled: bool = True
+    allowed_tools: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
