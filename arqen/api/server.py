@@ -10,6 +10,8 @@ from typing import Any
 from urllib.parse import urlparse
 
 from arqen.application.service import ArqenApplication
+from arqen.config import paths
+from arqen.mission import Event, MissionRunner, MissionStore, Task
 
 
 class ArqenHTTPServer(ThreadingHTTPServer):
@@ -17,6 +19,8 @@ class ArqenHTTPServer(ThreadingHTTPServer):
         super().__init__(server_address, ArqenRequestHandler)
         self.application = application
         self.token = token
+        self.mission_store = MissionStore(paths.data_dir() / "mission.sqlite3")
+        self.mission_runner = MissionRunner(self.mission_store, application._engine_factory)
 
 
 class ArqenRequestHandler(BaseHTTPRequestHandler):
@@ -41,6 +45,19 @@ class ArqenRequestHandler(BaseHTTPRequestHandler):
                 return
             if path == "/api/v1/control/status":
                 self._send_json(HTTPStatus.OK, {"data": self._control_status()})
+                return
+            if path == "/api/v1/mission/tasks":
+                tasks = self.server.mission_store.list_tasks()
+                self._send_json(HTTPStatus.OK, {"data": [self._as_json(item) for item in tasks]})
+                return
+            if path.startswith("/api/v1/mission/tasks/"):
+                task_id = path.removeprefix("/api/v1/mission/tasks/").strip("/")
+                if not task_id or "/" in task_id:
+                    raise FileNotFoundError(task_id)
+                task = self.server.mission_store.get_task(task_id)
+                if task is None:
+                    raise FileNotFoundError(task_id)
+                self._send_json(HTTPStatus.OK, {"data": {"task": self._as_json(task), "events": self._as_json(self.server.mission_store.list_events(task_id))}})
                 return
             if path == "/api/v1/sessions":
                 sessions = self.server.application.list_sessions()
@@ -67,6 +84,21 @@ class ArqenRequestHandler(BaseHTTPRequestHandler):
             if path == "/api/v1/sessions":
                 result = self.server.application.create_session(str(payload.get("title", "Ny chatt")))
                 self._send_json(HTTPStatus.CREATED, {"data": self._as_json(result)})
+                return
+            if path == "/api/v1/mission/tasks":
+                title = str(payload.get("title", "")).strip()
+                prompt = str(payload.get("prompt", "")).strip()
+                if not title or not prompt:
+                    raise ValueError("title och prompt krävs.")
+                task = Task.create(title, prompt, payload.get("agent_id"))
+                self.server.mission_store.save_task(task)
+                self.server.mission_store.add_event(Event.create(task.id, "created", "Task created"))
+                self._send_json(HTTPStatus.CREATED, {"data": self._as_json(task)})
+                return
+            if path.endswith("/run") and path.startswith("/api/v1/mission/tasks/"):
+                task_id = path.removeprefix("/api/v1/mission/tasks/").removesuffix("/run").strip("/")
+                result = self.server.mission_runner.run(task_id)
+                self._send_json(HTTPStatus.OK, {"data": {"task_id": task_id, "result": result}})
                 return
             if path.endswith("/messages") and path.startswith("/api/v1/sessions/"):
                 session_id = path.removeprefix("/api/v1/sessions/").removesuffix("/messages").strip("/")

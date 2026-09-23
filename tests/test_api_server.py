@@ -70,3 +70,22 @@ def test_api_rejects_missing_token(tmp_path: Path) -> None:
         server.shutdown()
         server.server_close()
         thread.join(timeout=2)
+
+
+def test_api_creates_reads_and_runs_mission_task(tmp_path: Path) -> None:
+    server, thread = make_server(tmp_path)
+    try:
+        status, created = request(server, "POST", "/api/v1/mission/tasks", {"title": "Test", "prompt": "Hej"})
+        assert status == 201
+        task_id = created["data"]["id"]
+        status, result = request(server, "POST", f"/api/v1/mission/tasks/{task_id}/run", {})
+        assert status == 200
+        assert result["data"]["result"] == "Jag tog emot: Hej"
+        status, details = request(server, "GET", f"/api/v1/mission/tasks/{task_id}")
+        assert status == 200
+        assert details["data"]["task"]["status"] == "completed"
+        assert [event["kind"] for event in details["data"]["events"]] == ["created", "started", "completed"]
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
