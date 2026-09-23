@@ -33,6 +33,8 @@ class Task:
     updated_at: str = field(default_factory=now)
     error: str | None = None
     claimed_at: str | None = None
+    attempts: int = 0
+    max_attempts: int = 3
 
     @classmethod
     def create(cls, title: str, prompt: str, agent_id: str | None = None) -> "Task":
