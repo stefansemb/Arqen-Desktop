@@ -683,9 +683,11 @@ class ArqenWindow(QMainWindow):
             mode = schedule.cron or f"once: {schedule.run_at}"
             state = "ON" if schedule.enabled else "OFF"
             agent = self.mission_store.get_agent(schedule.agent_id) if schedule.agent_id else None
+            workflow = next((item for item in self.mission_store.list_workflows() if item.id == schedule.workflow_id), None) if schedule.workflow_id else None
             count = sum(1 for task in self.mission_store.list_tasks() if task.schedule_id == schedule.id)
             last = schedule.last_run_at or "aldrig"
-            item = QListWidgetItem(f"[{state}] {schedule.name} // {mode} // {agent.name if agent else 'Arqen'} // tasks: {count}")
+            target = f"workflow: {workflow.name}" if workflow else f"task: {agent.name if agent else 'Arqen'}"
+            item = QListWidgetItem(f"[{state}] {schedule.name} // {mode} // {target} // tasks: {count}")
             item.setData(Qt.ItemDataRole.UserRole, schedule.id)
             item.setToolTip(f"Senaste körning: {last}")
             self.mission_schedules.addItem(item)
@@ -710,6 +712,15 @@ class ArqenWindow(QMainWindow):
             if not accepted or not run_at.strip():
                 return
             schedule = Schedule(uuid4().hex, name.strip(), prompt.strip(), run_at=run_at.strip())
+        workflow_id = None
+        workflows = self.mission_store.list_workflows()
+        if workflows:
+            choices = ["Vanlig task"] + [f"Workflow: {workflow.name}" for workflow in workflows]
+            selected, accepted = QInputDialog.getItem(self, "Nytt schema", "Kör:", choices, 0, False)
+            if not accepted:
+                return
+            if selected != choices[0]:
+                workflow_id = workflows[choices.index(selected) - 1].id
         agents = self.mission_store.list_agents()
         agent_id = None
         if agents:
@@ -719,7 +730,9 @@ class ArqenWindow(QMainWindow):
                 return
             if selected != labels[0]:
                 agent_id = next(agent.id for agent in agents if f"{agent.name} — {agent.role}" == selected)
-            schedule = Schedule(schedule.id, schedule.name, schedule.prompt, agent_id, schedule.cron, schedule.run_at)
+            schedule = Schedule(schedule.id, schedule.name, schedule.prompt, agent_id, schedule.cron, schedule.run_at, True, schedule.created_at, None, workflow_id)
+        elif workflow_id:
+            schedule = Schedule(schedule.id, schedule.name, schedule.prompt, None, schedule.cron, schedule.run_at, True, schedule.created_at, None, workflow_id)
         self.mission_store.save_schedule(schedule)
         self.refresh_mission_schedules()
 
