@@ -402,7 +402,7 @@ class ArqenWindow(QMainWindow):
         root = QWidget()
         layout = QHBoxLayout(root)
         navigation = QFrame(objectName="panel")
-        navigation.setFixedWidth(132)
+        navigation.setFixedWidth(172)
         navigation.setStyleSheet(
             "QFrame#panel { background: #0e1115; border-right: 1px solid #20262b; }"
             "QLabel#navSection { color: #657078; font-size: 9px; letter-spacing: 1px; padding-top: 14px; }"
