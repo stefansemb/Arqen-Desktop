@@ -617,8 +617,9 @@ class ArqenWindow(QMainWindow):
         self.mission_details.setPlaceholderText("Select a task to view status and events.")
         page_layout.addWidget(self.mission_details)
         row = QHBoxLayout()
-        for label, handler in (("NEW TASK", self._create_mission_task), ("RUN SELECTED TASK", self._run_mission_task), ("RETRY", self._retry_mission_task)):
+        for index, (label, handler) in enumerate((("NEW TASK", self._create_mission_task), ("RUN SELECTED TASK", self._run_mission_task), ("RETRY", self._retry_mission_task))):
             button = QPushButton(label)
+            self._style_page_action(button, primary=index == 0)
             button.clicked.connect(handler)
             row.addWidget(button)
         page_layout.addLayout(row)
@@ -634,8 +635,9 @@ class ArqenWindow(QMainWindow):
         self.mission_workflow_runs = QListWidget()
         page_layout.addWidget(self.mission_workflow_runs)
         row = QHBoxLayout()
-        for label, handler in (("NEW WORKFLOW", self._create_mission_workflow), ("RUN WORKFLOW", self._run_mission_workflow), ("RESUME RUN", self._resume_mission_workflow)):
+        for index, (label, handler) in enumerate((("NEW WORKFLOW", self._create_mission_workflow), ("RUN WORKFLOW", self._run_mission_workflow), ("RESUME RUN", self._resume_mission_workflow))):
             button = QPushButton(label)
+            self._style_page_action(button, primary=index == 0)
             button.clicked.connect(handler)
             row.addWidget(button)
         page_layout.addLayout(row)
@@ -649,8 +651,9 @@ class ArqenWindow(QMainWindow):
         self.mission_schedules = QListWidget()
         page_layout.addWidget(self.mission_schedules, 1)
         row = QHBoxLayout()
-        for label, handler in (("NEW SCHEDULE", self._create_mission_schedule), ("ENABLE/DISABLE", self._toggle_mission_schedule)):
+        for index, (label, handler) in enumerate((("NEW SCHEDULE", self._create_mission_schedule), ("ENABLE/DISABLE", self._toggle_mission_schedule))):
             button = QPushButton(label)
+            self._style_page_action(button, primary=index == 0)
             button.clicked.connect(handler)
             row.addWidget(button)
         page_layout.addLayout(row)
@@ -664,12 +667,26 @@ class ArqenWindow(QMainWindow):
         self.mission_agents = QListWidget()
         page_layout.addWidget(self.mission_agents, 1)
         row = QHBoxLayout()
-        for label, handler in (("NEW AGENT", self._create_mission_agent), ("EDIT", self._edit_mission_agent), ("ENABLE/DISABLE", self._toggle_mission_agent)):
+        for index, (label, handler) in enumerate((("NEW AGENT", self._create_mission_agent), ("EDIT", self._edit_mission_agent), ("ENABLE/DISABLE", self._toggle_mission_agent))):
             button = QPushButton(label)
+            self._style_page_action(button, primary=index == 0)
             button.clicked.connect(handler)
             row.addWidget(button)
         page_layout.addLayout(row)
         self.navigation_stack.addWidget(page)
+
+    def _style_page_action(self, button: QPushButton, *, primary: bool = False) -> None:
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        if primary:
+            button.setStyleSheet(
+                "QPushButton { background: #b7ff18; color: #0b0d0e; border: none; border-radius: 5px; padding: 9px 14px; font-weight: 700; }"
+                "QPushButton:hover { background: #d0ff62; } QPushButton:pressed { background: #93d900; }"
+            )
+        else:
+            button.setStyleSheet(
+                "QPushButton { background: #171d21; color: #c4cec9; border: 1px solid #30383a; border-radius: 5px; padding: 9px 14px; }"
+                "QPushButton:hover { background: #20282a; color: #f2f0eb; border-color: #66736e; } QPushButton:pressed { background: #111516; }"
+            )
 
     def _add_activity_view(self) -> None:
         page = QWidget()
