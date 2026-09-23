@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (
     QSizePolicy,
     QMenu,
     QTabWidget,
+    QStackedWidget,
     QFileDialog,
 )
 from PyQt6.QtCore import QEvent, QObject, QSettings, QThread, QTimer, Qt, QUrl, QPoint, QSize, pyqtSignal, pyqtSlot
@@ -520,7 +521,16 @@ class ArqenWindow(QMainWindow):
         content_layout.addWidget(chat_surface, 1)
         content_layout.addLayout(input_row)
         layout.addWidget(sidebar)
-        layout.addWidget(content, 1)
+        self.navigation_stack = QStackedWidget()
+        self.navigation_stack.addWidget(content)
+        for label in ("Tasks", "Workflows", "Agents", "Activity", "Memory", "Content"):
+            page = QWidget()
+            page_layout = QVBoxLayout(page)
+            page_layout.addWidget(QLabel(label.upper(), objectName="title"))
+            page_layout.addWidget(QLabel("Den här vyn byggs vidare i nästa UI-steg."))
+            page_layout.addStretch(1)
+            self.navigation_stack.addWidget(page)
+        layout.addWidget(self.navigation_stack, 1)
         self.setCentralWidget(root)
         self._create_visualization_dock()
         self.engine.on_confirmation_required = self.show_confirmation
@@ -541,8 +551,9 @@ class ArqenWindow(QMainWindow):
 
     def _select_navigation(self, name: str) -> None:
         self.status.setText(self.provider_status(f"{name.upper()}"))
-        if hasattr(self, "mission_dock"):
-            self.mission_dock.setVisible(name != "Dashboard" or self.mission_dock.isVisible())
+        pages = {"Dashboard": 0, "Tasks": 1, "Workflows": 2, "Agents": 3, "Activity": 4, "Memory": 5, "Content": 6}
+        if name in pages and hasattr(self, "navigation_stack"):
+            self.navigation_stack.setCurrentIndex(pages[name])
 
     def _create_mission_dock(self) -> None:
         """Create the first functional Mission Control surface."""
