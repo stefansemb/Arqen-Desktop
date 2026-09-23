@@ -541,13 +541,18 @@ class ArqenWindow(QMainWindow):
         panel_layout.addWidget(QLabel("WORKFLOWS"))
         self.mission_workflows = QListWidget()
         panel_layout.addWidget(self.mission_workflows)
+        self.mission_workflow_runs = QListWidget()
+        panel_layout.addWidget(self.mission_workflow_runs)
         workflow_row = QHBoxLayout()
         new_workflow = QPushButton("NYTT WORKFLOW")
         run_workflow = QPushButton("KÖR WORKFLOW")
+        resume_workflow = QPushButton("ÅTERUPPTA RUN")
         new_workflow.clicked.connect(self._create_mission_workflow)
         run_workflow.clicked.connect(self._run_mission_workflow)
+        resume_workflow.clicked.connect(self._resume_mission_workflow)
         workflow_row.addWidget(new_workflow)
         workflow_row.addWidget(run_workflow)
+        workflow_row.addWidget(resume_workflow)
         panel_layout.addLayout(workflow_row)
         panel_layout.addWidget(QLabel("SCHEMAN"))
         self.mission_schedules = QListWidget()
@@ -608,6 +613,7 @@ class ArqenWindow(QMainWindow):
         self.refresh_mission_agents()
         self.refresh_mission_schedules()
         self.refresh_mission_workflows()
+        self.refresh_mission_workflow_runs()
 
     def refresh_mission_workflows(self) -> None:
         self.mission_workflows.clear()
@@ -616,6 +622,14 @@ class ArqenWindow(QMainWindow):
             item.setData(Qt.ItemDataRole.UserRole, workflow.id)
             item.setToolTip("\n".join(f"{step.name} → {step.agent_id or 'Arqen'}" for step in workflow.steps))
             self.mission_workflows.addItem(item)
+
+    def refresh_mission_workflow_runs(self) -> None:
+        self.mission_workflow_runs.clear()
+        for run in self.mission_store.list_workflow_runs():
+            item = QListWidgetItem(f"[{run.status.upper()}] {run.workflow_id} // steg {run.current_step} // {run.id[:8]}")
+            item.setData(Qt.ItemDataRole.UserRole, run.id)
+            item.setToolTip("\n".join(run.results) or "Inga resultat ännu")
+            self.mission_workflow_runs.addItem(item)
 
     def _create_mission_workflow(self) -> None:
         name, accepted = QInputDialog.getText(self, "Nytt workflow", "Namn:")
@@ -647,6 +661,21 @@ class ArqenWindow(QMainWindow):
         except Exception as exc:
             QMessageBox.warning(self, "Mission Control", str(exc))
         self.refresh_mission_tasks()
+        self.refresh_mission_workflow_runs()
+
+    def _resume_mission_workflow(self) -> None:
+        item = self.mission_workflow_runs.currentItem()
+        if item is None:
+            return
+        run = self.mission_store.get_workflow_run(item.data(Qt.ItemDataRole.UserRole))
+        if run is None or run.status != "waiting_approval":
+            return
+        try:
+            self.workflow_runner.resume(run.id)
+        except Exception as exc:
+            QMessageBox.warning(self, "Mission Control", str(exc))
+        self.refresh_mission_tasks()
+        self.refresh_mission_workflow_runs()
 
     def refresh_mission_schedules(self) -> None:
         self.mission_schedules.clear()
