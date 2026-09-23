@@ -413,7 +413,7 @@ class ArqenWindow(QMainWindow):
         navigation_layout.addWidget(QLabel("ARQEN", objectName="title"))
         navigation_layout.addWidget(QLabel("MISSION CONTROL"))
         navigation_layout.addWidget(QLabel("OVERVIEW", objectName="navSection"))
-        for label, icon in (("Dashboard", "⌂"), ("Tasks", "▣"), ("Workflows", "⌘")):
+        for label, icon in (("Dashboard", "⌂"), ("Chat", "◌"), ("Mission Control", "◈")):
             self._add_navigation_button(navigation_layout, label, icon)
         navigation_layout.addWidget(QLabel("SYSTEM", objectName="navSection"))
         for label, icon in (("Agents", "♙"), ("Activity", "≋"), ("Memory", "▤")):
@@ -531,7 +531,7 @@ class ArqenWindow(QMainWindow):
         content_layout.addWidget(header)
         content_layout.addWidget(chat_surface, 1)
         content_layout.addLayout(input_row)
-        layout.addWidget(sidebar)
+        sidebar.hide()
         self.navigation_stack = QStackedWidget()
         dashboard = QWidget()
         dashboard_layout = QVBoxLayout(dashboard)
@@ -602,7 +602,7 @@ class ArqenWindow(QMainWindow):
                 "QPushButton { background: transparent; color: #8d969d; border: none; "
                 "text-align: left; padding: 7px 8px; border-radius: 5px; }"
             )
-        pages = {"Dashboard": 0, "Tasks": 2, "Workflows": 3, "Agents": 4, "Activity": 5, "Memory": 6, "Content": 7}
+        pages = {"Dashboard": 0, "Chat": 1, "Tasks": 2, "Workflows": 3, "Agents": 4, "Activity": 5, "Memory": 6, "Content": 7, "Mission Control": getattr(self, "mission_page_index", 0)}
         if name in pages and hasattr(self, "navigation_stack"):
             self.navigation_stack.setCurrentIndex(pages[name])
 
@@ -695,6 +695,10 @@ class ArqenWindow(QMainWindow):
         dock.setWidget(panel)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock)
         self.mission_dock = dock
+        mission_page = dock.widget()
+        dock.setWidget(None)
+        self.mission_page_index = self.navigation_stack.addWidget(mission_page)
+        dock.hide()
         self.refresh_mission_tasks()
         self.refresh_mission_approvals()
         self.refresh_mission_agents()
