@@ -95,6 +95,10 @@ class ArqenRequestHandler(BaseHTTPRequestHandler):
                 workflows = self.mission_store.list_workflows()
                 self._send_json(HTTPStatus.OK, {"data": [self._as_json(item) for item in workflows]})
                 return
+            if path.startswith("/api/v1/mission/workflows/") and path.endswith("/runs"):
+                workflow_id = path.removeprefix("/api/v1/mission/workflows/").removesuffix("/runs").strip("/")
+                self._send_json(HTTPStatus.OK, {"data": [self._as_json(item) for item in self.server.mission_store.list_workflow_runs(workflow_id)]})
+                return
             if path.startswith("/api/v1/mission/tasks/"):
                 task_id = path.removeprefix("/api/v1/mission/tasks/").strip("/")
                 if not task_id or "/" in task_id:
@@ -186,7 +190,7 @@ class ArqenRequestHandler(BaseHTTPRequestHandler):
                 workflow = next((item for item in self.mission_store.list_workflows() if item.id == workflow_id), None)
                 if workflow is None:
                     raise FileNotFoundError(workflow_id)
-                results = self.workflow_runner.run(workflow.name, list(workflow.steps))
+                results = self.workflow_runner.run(workflow.name, list(workflow.steps), workflow.id)
                 self._send_json(HTTPStatus.OK, {"data": {"workflow_id": workflow.id, "results": results}})
                 return
             if path.startswith("/api/v1/mission/approvals/") and path.endswith("/decision"):

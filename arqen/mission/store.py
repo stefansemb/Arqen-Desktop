@@ -3,7 +3,7 @@ import sqlite3
 from pathlib import Path
 
 from arqen.mission.contracts import Agent, Approval, Event, Schedule, Task, TaskStatus
-from arqen.mission.workflow import Workflow, WorkflowStep
+from arqen.mission.workflow import Workflow, WorkflowRun, WorkflowStep
 
 
 class MissionStore:
@@ -50,6 +50,10 @@ class MissionStore:
                 CREATE TABLE IF NOT EXISTS workflows (
                     id TEXT PRIMARY KEY, name TEXT NOT NULL, steps TEXT NOT NULL,
                     enabled INTEGER NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS workflow_runs (
+                    id TEXT PRIMARY KEY, workflow_id TEXT NOT NULL, status TEXT NOT NULL,
+                    current_step INTEGER NOT NULL, results TEXT NOT NULL
                 );
             """)
             columns = {row["name"] for row in db.execute("PRAGMA table_info(agents)").fetchall()}
@@ -160,6 +164,22 @@ class MissionStore:
         with self._connect() as db:
             rows = db.execute("SELECT * FROM workflows ORDER BY name").fetchall()
         return [Workflow(row["id"], row["name"], tuple(WorkflowStep(item["name"], item["prompt"], item.get("agent_id")) for item in json.loads(row["steps"])), bool(row["enabled"])) for row in rows]
+
+    def save_workflow_run(self, run: WorkflowRun) -> None:
+        with self._connect() as db:
+            db.execute("INSERT OR REPLACE INTO workflow_runs VALUES (?, ?, ?, ?, ?)",
+                       (run.id, run.workflow_id, run.status, run.current_step, json.dumps(run.results)))
+
+    def list_workflow_runs(self, workflow_id: str | None = None) -> list[WorkflowRun]:
+        query = "SELECT * FROM workflow_runs"
+        params: tuple[str, ...] = ()
+        if workflow_id:
+            query += " WHERE workflow_id = ?"
+            params = (workflow_id,)
+        query += " ORDER BY id DESC"
+        with self._connect() as db:
+            rows = db.execute(query, params).fetchall()
+        return [WorkflowRun(row["id"], row["workflow_id"], row["status"], row["current_step"], tuple(json.loads(row["results"]))) for row in rows]
 
     def list_schedules(self) -> list[Schedule]:
         with self._connect() as db:
