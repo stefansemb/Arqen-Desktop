@@ -449,8 +449,7 @@ class ArqenWindow(QMainWindow):
         )
         header_layout.addWidget(self.status)
 
-        background_path = str(data_dir() / "generated" / "Arqen Chat Background.png")
-        self.output = ChatBackgroundTextEdit(background_path)
+        self.output = QTextEdit(readOnly=True)
         self.output.setPlaceholderText("")
         self.output.setStyleSheet(
             "QTextEdit { background: transparent; color: #f2f0eb; "
@@ -461,11 +460,6 @@ class ArqenWindow(QMainWindow):
         chat_surface.setStyleSheet("QWidget#chatSurface { background: #17181c; border-radius: 6px; }")
         chat_surface_layout = QGridLayout(chat_surface)
         chat_surface_layout.setContentsMargins(0, 0, 0, 0)
-        background_label = QLabel(chat_surface)
-        background_label.setPixmap(QPixmap(background_path))
-        background_label.setScaledContents(True)
-        background_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        chat_surface_layout.addWidget(background_label, 0, 0)
         chat_surface_layout.addWidget(self.output, 0, 0)
         placeholder_label = QLabel("Konversationen visas här...", chat_surface)
         placeholder_label.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
