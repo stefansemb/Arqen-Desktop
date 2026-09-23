@@ -49,7 +49,7 @@ from arqen.ui.theme import CyberpunkGreenTheme
 from arqen.core.provider_metrics import ProviderMetrics
 from arqen.tools.speech import set_audio_level_callback
 from arqen.tools.microphone import MicrophoneRecorder
-from arqen.mission import MissionRunner, MissionStore, Task
+from arqen.mission import Agent, MissionRunner, MissionStore, Task
 
 
 class ChatBackgroundTextEdit(QTextEdit):
@@ -539,6 +539,14 @@ class ArqenWindow(QMainWindow):
         panel_layout.addWidget(QLabel("AGENTER"))
         self.mission_agents = QListWidget()
         panel_layout.addWidget(self.mission_agents)
+        agent_row = QHBoxLayout()
+        new_agent = QPushButton("NY AGENT")
+        toggle_agent = QPushButton("AKTIVERA/INAKTIVERA")
+        new_agent.clicked.connect(self._create_mission_agent)
+        toggle_agent.clicked.connect(self._toggle_mission_agent)
+        agent_row.addWidget(new_agent)
+        agent_row.addWidget(toggle_agent)
+        panel_layout.addLayout(agent_row)
         self.mission_tasks = QListWidget()
         self.mission_tasks.itemClicked.connect(self._show_mission_task)
         panel_layout.addWidget(self.mission_tasks, 1)
@@ -574,8 +582,36 @@ class ArqenWindow(QMainWindow):
         for agent in self.mission_store.list_agents():
             status = self.mission_runner.runtime_status(agent.id)
             item = QListWidgetItem(f"[{status['status'].upper()}] {agent.name} // {agent.runtime}")
+            item.setData(Qt.ItemDataRole.UserRole, agent.id)
             item.setToolTip(str(status.get("detail", status.get("status", ""))))
             self.mission_agents.addItem(item)
+
+    def _create_mission_agent(self) -> None:
+        agent_id, accepted = QInputDialog.getText(self, "Ny agent", "ID:")
+        if not accepted or not agent_id.strip():
+            return
+        name, accepted = QInputDialog.getText(self, "Ny agent", "Namn:")
+        if not accepted or not name.strip():
+            return
+        role, accepted = QInputDialog.getText(self, "Ny agent", "Roll:")
+        if not accepted or not role.strip():
+            return
+        runtime, accepted = QInputDialog.getItem(self, "Ny agent", "Runtime:", ["arqen", "hermes"], 0, False)
+        if not accepted:
+            return
+        self.mission_store.save_agent(Agent(agent_id.strip(), name.strip(), role.strip(), runtime))
+        self.refresh_mission_agents()
+
+    def _toggle_mission_agent(self) -> None:
+        item = self.mission_agents.currentItem()
+        if item is None:
+            return
+        agent_id = item.data(Qt.ItemDataRole.UserRole)
+        agent = self.mission_store.get_agent(agent_id)
+        if agent is None:
+            return
+        self.mission_store.save_agent(Agent(agent.id, agent.name, agent.role, agent.runtime, not agent.enabled))
+        self.refresh_mission_agents()
 
     def refresh_mission_tasks(self) -> None:
         if not hasattr(self, "mission_tasks"):
