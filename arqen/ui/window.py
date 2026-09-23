@@ -560,6 +560,9 @@ class ArqenWindow(QMainWindow):
             if label == "Tasks":
                 self._add_tasks_view()
                 continue
+            if label == "Workflows":
+                self._add_workflows_view()
+                continue
             page = QWidget()
             page_layout = QVBoxLayout(page)
             page_layout.addWidget(QLabel(label.upper(), objectName="title"))
@@ -605,6 +608,23 @@ class ArqenWindow(QMainWindow):
         page_layout.addLayout(row)
         self.navigation_stack.addWidget(page)
 
+    def _add_workflows_view(self) -> None:
+        page = QWidget()
+        page_layout = QVBoxLayout(page)
+        page_layout.addWidget(QLabel("WORKFLOWS", objectName="title"))
+        page_layout.addWidget(QLabel("Build and run multi-agent pipelines."))
+        self.mission_workflows = QListWidget()
+        page_layout.addWidget(self.mission_workflows)
+        self.mission_workflow_runs = QListWidget()
+        page_layout.addWidget(self.mission_workflow_runs)
+        row = QHBoxLayout()
+        for label, handler in (("NEW WORKFLOW", self._create_mission_workflow), ("RUN WORKFLOW", self._run_mission_workflow), ("RESUME RUN", self._resume_mission_workflow)):
+            button = QPushButton(label)
+            button.clicked.connect(handler)
+            row.addWidget(button)
+        page_layout.addLayout(row)
+        self.navigation_stack.addWidget(page)
+
     def _add_navigation_button(self, layout: QVBoxLayout, label: str, icon: str) -> None:
         button = QPushButton(f"{icon}  {label}")
         button.setObjectName("navButton")
@@ -638,10 +658,10 @@ class ArqenWindow(QMainWindow):
         panel = QWidget()
         panel_layout = QVBoxLayout(panel)
         panel_layout.addWidget(QLabel("WORKFLOWS"))
-        self.mission_workflows = QListWidget()
-        panel_layout.addWidget(self.mission_workflows)
-        self.mission_workflow_runs = QListWidget()
-        panel_layout.addWidget(self.mission_workflow_runs)
+        legacy_workflows = QListWidget()
+        panel_layout.addWidget(legacy_workflows)
+        legacy_workflow_runs = QListWidget()
+        panel_layout.addWidget(legacy_workflow_runs)
         workflow_row = QHBoxLayout()
         new_workflow = QPushButton("NEW WORKFLOW")
         run_workflow = QPushButton("RUN WORKFLOW")
