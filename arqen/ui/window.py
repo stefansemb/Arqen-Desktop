@@ -316,7 +316,7 @@ class StatsPanelWidget(QWidget):
         layout.setContentsMargins(14, 12, 14, 12)
         layout.setSpacing(6)
         self._rows: dict[str, QLabel] = {}
-        self._heading(layout, "DEN HÄR SESSIONEN")
+        self._heading(layout, "CURRENT SESSION")
         for key, label in (("session_tokens", "Tokens"), ("session_split", "In / out"), ("session_cost", "Cost")):
             self._row(layout, key, label)
         layout.addSpacing(8)
@@ -452,8 +452,8 @@ class ArqenWindow(QMainWindow):
         self.voice_button.setAccessibleName("Toggle voice mode")
         self.voice_button.clicked.connect(self.toggle_voice_mode)
         settings_button = QPushButton("⚙")
-        settings_button.setToolTip("Inställningar")
-        settings_button.setAccessibleName("Inställningar")
+        settings_button.setToolTip("Settings")
+        settings_button.setAccessibleName("Settings")
         settings_button.clicked.connect(self.open_settings)
         for button in (self.mic_button, self.voice_button, settings_button):
             button.setMinimumWidth(0)
@@ -963,7 +963,7 @@ class ArqenWindow(QMainWindow):
         for run in self.mission_store.list_workflow_runs():
             item = QListWidgetItem(f"[{run.status.upper()}] {run.workflow_id} // step {run.current_step} // {run.id[:8]}")
             item.setData(Qt.ItemDataRole.UserRole, run.id)
-            item.setToolTip("\n".join(run.results) or "Inga resultat ännu")
+            item.setToolTip("\n".join(run.results) or "No results yet")
             self.mission_workflow_runs.addItem(item)
 
     def _create_mission_workflow(self) -> None:
@@ -1024,7 +1024,7 @@ class ArqenWindow(QMainWindow):
             target = f"workflow: {workflow.name}" if workflow else f"task: {agent.name if agent else 'Arqen'}"
             item = QListWidgetItem(f"[{state}] {schedule.name} // {mode} // {target} // tasks: {count}")
             item.setData(Qt.ItemDataRole.UserRole, schedule.id)
-            item.setToolTip(f"Senaste körning: {last}")
+            item.setToolTip(f"Last run: {last}")
             self.mission_schedules.addItem(item)
 
     def _create_mission_schedule(self) -> None:
@@ -1151,7 +1151,7 @@ class ArqenWindow(QMainWindow):
         role, accepted = QInputDialog.getText(self, "Edit agent", "Role:", text=agent.role)
         if not accepted or not role.strip():
             return
-        runtime, accepted = QInputDialog.getItem(self, "Redigera agent", "Runtime:", ["arqen", "hermes"], max(0, ["arqen", "hermes"].index(agent.runtime)), False)
+        runtime, accepted = QInputDialog.getItem(self, "Edit agent", "Runtime:", ["arqen", "hermes"], max(0, ["arqen", "hermes"].index(agent.runtime)), False)
         if not accepted:
             return
         current_tools = ", ".join(agent.allowed_tools)
@@ -1164,12 +1164,12 @@ class ArqenWindow(QMainWindow):
         if unknown:
             QMessageBox.warning(self, "Mission Control", f"Okända verktyg: {', '.join(unknown)}")
             return
-        approvals_text, accepted = QInputDialog.getText(self, "Redigera agent", "Verktyg som kräver approval:", text=", ".join(agent.approval_tools))
+        approvals_text, accepted = QInputDialog.getText(self, "Edit agent", "Tools requiring approval:", text=", ".join(agent.approval_tools))
         if not accepted:
             return
         approval_tools = tuple(value.strip() for value in approvals_text.split(",") if value.strip())
         if set(approval_tools) - set(allowed_tools):
-            QMessageBox.warning(self, "Mission Control", "Approval-verktyg måste finnas i allowlisten.")
+            QMessageBox.warning(self, "Mission Control", "Approval tools must be included in the allowlist.")
             return
         self.mission_store.save_agent(Agent(agent.id, name.strip(), role.strip(), runtime, agent.enabled, allowed_tools, approval_tools))
         self.refresh_mission_agents()
@@ -1299,9 +1299,9 @@ class ArqenWindow(QMainWindow):
             return
         self.session_list.setCurrentItem(item)
         menu = QMenu(self)
-        open_action = menu.addAction("Öppna")
+        open_action = menu.addAction("Open")
         rename_action = menu.addAction("Rename")
-        delete_action = menu.addAction("Ta bort")
+        delete_action = menu.addAction("Delete")
         selected = menu.exec(self.session_list.viewport().mapToGlobal(position))
         if selected == open_action:
             self.load_selected_session()
@@ -1821,7 +1821,7 @@ class ArqenWindow(QMainWindow):
         answer = QMessageBox.question(
             self,
             "Delete chat",
-            f"Vill du ta bort '{session.title}'?",
+            f"Delete '{session.title}'?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if answer != QMessageBox.StandardButton.Yes:
@@ -1941,7 +1941,7 @@ class ArqenWindow(QMainWindow):
         saved_profile = {"private": "private", "fast": "fast", "important": "important", "creative": "creative"}.get(config.profile_name, "")
         if saved_profile:
             profile.setCurrentIndex(profile.findData(saved_profile))
-        profile_form.addRow("Profil", profile)
+        profile_form.addRow("Profile", profile)
         profile_hint = QLabel()
         profile_hint.setWordWrap(True)
         profile_form.addRow("Beskrivning", profile_hint)
@@ -2014,7 +2014,7 @@ class ArqenWindow(QMainWindow):
             )
         )
 
-        apply_profile = QPushButton("TILLÄMPA PROFIL")
+        apply_profile = QPushButton("APPLY PROFILE")
         apply_profile.setObjectName("secondaryButton")
         apply_profile.clicked.connect(
             lambda: self.apply_provider_profile(
@@ -2026,18 +2026,18 @@ class ArqenWindow(QMainWindow):
 
         workspace = QLineEdit(str(load_workspace_root()))
         workspace.setMinimumWidth(520)
-        workspace_form.addRow("Arbetskatalog", workspace)
-        browse = QPushButton("VÄLJ MAPP")
+        workspace_form.addRow("Workspace", workspace)
+        browse = QPushButton("BROWSE FOLDER")
         browse.setObjectName("secondaryButton")
         browse.clicked.connect(lambda: self.choose_workspace(dialog, workspace))
         workspace_form.addRow(browse)
         workspace_hint = QLabel(
-            "Mappen Arqen läser och skriver filer i. Den påverkar bara verktygen — "
+            "The folder Arqen reads and writes files in. It only affects tools — "
             "settings, chats and memory remain inside the application "
-            f"({APP_ROOT}). Lämna den tom för att använda programmets egen mapp."
+            f"({APP_ROOT}). Leave it empty to use the application folder."
         )
         workspace_hint.setWordWrap(True)
-        workspace_form.addRow("Om", workspace_hint)
+        workspace_form.addRow("About", workspace_hint)
 
         refresh_models = QPushButton("FETCH MODELS")
         refresh_models.setObjectName("secondaryButton")
@@ -2052,7 +2052,7 @@ class ArqenWindow(QMainWindow):
         )
         actions_layout.addWidget(test_connection)
 
-        save = QPushButton("SPARA")
+        save = QPushButton("SAVE")
         save.setObjectName("primaryButton")
         save.clicked.connect(
             lambda: self.save_settings(
