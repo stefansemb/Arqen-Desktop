@@ -716,6 +716,7 @@ class ArqenWindow(QMainWindow):
         page_layout.addWidget(QLabel("ACTIVITY", objectName="title"))
         page_layout.addWidget(QLabel("Live system events and agent activity."))
         self.activity_view_list = QListWidget()
+        self.activity_view_list.itemClicked.connect(self._open_activity_task)
         page_layout.addWidget(self.activity_view_list, 1)
         self.activity_view_timer = QTimer(self)
         self.activity_view_timer.setInterval(2000)
@@ -726,9 +727,7 @@ class ArqenWindow(QMainWindow):
     def _refresh_activity_view(self) -> None:
         if not hasattr(self, "activity_view_list") or not hasattr(self, "mission_store"):
             return
-        self.activity_view_list.clear()
-        for event in self.mission_store.list_all_events(100):
-            self.activity_view_list.addItem(f"{event.created_at} [{event.kind}] {event.message}")
+        self.refresh_mission_activity()
 
     def _add_memory_view(self) -> None:
         page = QWidget()
@@ -892,7 +891,8 @@ class ArqenWindow(QMainWindow):
             self.dashboard_activity.addItem(f"[{event.kind}] {event.message}")
 
     def refresh_mission_activity(self) -> None:
-        self.mission_activity.clear()
+        target = getattr(self, "activity_view_list", self.mission_activity)
+        target.clear()
         for event in self.mission_store.list_all_events(50):
             item = QListWidgetItem(f"{event.created_at} [{event.kind}] {event.message}")
             item.setData(Qt.ItemDataRole.UserRole, event.task_id)
@@ -902,7 +902,7 @@ class ArqenWindow(QMainWindow):
                 item.setForeground(QColor("#ffd166"))
             elif event.kind == "completed":
                 item.setForeground(QColor("#b7ff18"))
-            self.mission_activity.addItem(item)
+            target.addItem(item)
 
     def _open_activity_task(self, item: QListWidgetItem) -> None:
         task_id = item.data(Qt.ItemDataRole.UserRole)
