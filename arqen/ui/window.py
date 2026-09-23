@@ -48,6 +48,7 @@ from arqen.providers.config import ProviderConfig
 from arqen.providers.factory import create_provider
 from arqen.ui.theme import CyberpunkGreenTheme
 from arqen.core.provider_metrics import ProviderMetrics
+from arqen.core.memory_store import MemoryStore
 from arqen.tools.speech import set_audio_level_callback
 from arqen.tools.microphone import MicrophoneRecorder
 from arqen.mission import Agent, MissionRunner, MissionStore, Schedule, Task, Workflow, WorkflowRunner, WorkflowStep
@@ -569,6 +570,15 @@ class ArqenWindow(QMainWindow):
             if label == "Agents":
                 self._add_agents_view()
                 continue
+            if label == "Activity":
+                self._add_activity_view()
+                continue
+            if label == "Memory":
+                self._add_memory_view()
+                continue
+            if label == "Content":
+                self._add_content_view()
+                continue
             page = QWidget()
             page_layout = QVBoxLayout(page)
             page_layout.addWidget(QLabel(label.upper(), objectName="title"))
@@ -659,6 +669,51 @@ class ArqenWindow(QMainWindow):
             button.clicked.connect(handler)
             row.addWidget(button)
         page_layout.addLayout(row)
+        self.navigation_stack.addWidget(page)
+
+    def _add_activity_view(self) -> None:
+        page = QWidget()
+        page_layout = QVBoxLayout(page)
+        page_layout.addWidget(QLabel("ACTIVITY", objectName="title"))
+        page_layout.addWidget(QLabel("Live system events and agent activity."))
+        self.activity_view_list = QListWidget()
+        page_layout.addWidget(self.activity_view_list, 1)
+        self.activity_view_timer = QTimer(self)
+        self.activity_view_timer.setInterval(2000)
+        self.activity_view_timer.timeout.connect(self._refresh_activity_view)
+        self.activity_view_timer.start()
+        self.navigation_stack.addWidget(page)
+
+    def _refresh_activity_view(self) -> None:
+        if not hasattr(self, "activity_view_list") or not hasattr(self, "mission_store"):
+            return
+        self.activity_view_list.clear()
+        for event in self.mission_store.list_all_events(100):
+            self.activity_view_list.addItem(f"{event.created_at} [{event.kind}] {event.message}")
+
+    def _add_memory_view(self) -> None:
+        page = QWidget()
+        page_layout = QVBoxLayout(page)
+        page_layout.addWidget(QLabel("MEMORY", objectName="title"))
+        page_layout.addWidget(QLabel("User-approved long-term context."))
+        self.memory_view_list = QListWidget()
+        page_layout.addWidget(self.memory_view_list, 1)
+        for item in MemoryStore().list():
+            self.memory_view_list.addItem(str(item))
+        self.navigation_stack.addWidget(page)
+
+    def _add_content_view(self) -> None:
+        page = QWidget()
+        page_layout = QVBoxLayout(page)
+        page_layout.addWidget(QLabel("CONTENT", objectName="title"))
+        page_layout.addWidget(QLabel("Generated files and workflow artifacts."))
+        self.content_view_list = QListWidget()
+        page_layout.addWidget(self.content_view_list, 1)
+        root = data_dir()
+        if root.exists():
+            for path in sorted(root.rglob("*")):
+                if path.is_file() and path.name != "mission.sqlite3":
+                    self.content_view_list.addItem(str(path.relative_to(root)))
         self.navigation_stack.addWidget(page)
 
     def _add_navigation_button(self, layout: QVBoxLayout, label: str, icon: str) -> None:
