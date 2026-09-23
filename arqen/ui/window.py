@@ -706,6 +706,11 @@ class ArqenWindow(QMainWindow):
         page_layout = QVBoxLayout(page)
         page_layout.addWidget(QLabel("AGENTS", objectName="title"))
         page_layout.addWidget(QLabel("Manage runtimes, tools and approval policies."))
+        self.nexus_card_host = QWidget()
+        self.nexus_card_layout = QHBoxLayout(self.nexus_card_host)
+        self.nexus_card_layout.setContentsMargins(0, 0, 0, 0)
+        page_layout.addWidget(self.nexus_card_host)
+        page_layout.addWidget(QLabel("AGENT TEAM", objectName="sectionLabel"))
         self.mission_agents = QListWidget()
         self.mission_agents.setViewMode(QListWidget.ViewMode.IconMode)
         self.mission_agents.setResizeMode(QListWidget.ResizeMode.Adjust)
@@ -1165,19 +1170,19 @@ class ArqenWindow(QMainWindow):
 
     def refresh_mission_agents(self) -> None:
         self.mission_agents.clear()
+        while self.nexus_card_layout.count():
+            child = self.nexus_card_layout.takeAt(0)
+            if child.widget() is not None:
+                child.widget().deleteLater()
         agents = self.mission_store.list_agents()
-        agents.sort(key=lambda agent: (agent.id != "nexus", agent.name.lower()))
+        agents.sort(key=lambda agent: agent.name.lower())
         for agent in agents:
             status = self.mission_runner.runtime_status(agent.id)
-            item = QListWidgetItem()
-            item.setData(Qt.ItemDataRole.UserRole, agent.id)
             tools = ", ".join(agent.allowed_tools) or "no tools"
             approvals = ", ".join(agent.approval_tools) or "none"
-            item.setToolTip(f"{status.get('detail', status.get('status', ''))}\nAllowed tools: {tools}\nRequires approval: {approvals}")
-            self.mission_agents.addItem(item)
             card = QFrame(objectName="panel")
-            card.setMinimumSize(250, 128)
-            card.setMaximumWidth(320)
+            card.setMinimumSize(280, 132)
+            card.setMaximumWidth(360)
             card_layout = QVBoxLayout(card)
             heading = QHBoxLayout()
             indicator = QLabel("●")
@@ -1192,8 +1197,15 @@ class ArqenWindow(QMainWindow):
             self._style_page_action(chat)
             chat.clicked.connect(lambda _, name=agent.name: self._open_agent_chat(name))
             card_layout.addWidget(chat)
-            self.mission_agents.setItemWidget(item, card)
-            item.setSizeHint(card.sizeHint())
+            card.setToolTip(f"{status.get('detail', status.get('status', ''))}\nAllowed tools: {tools}\nRequires approval: {approvals}")
+            if agent.id == "nexus":
+                self.nexus_card_layout.addWidget(card, alignment=Qt.AlignmentFlag.AlignHCenter)
+            else:
+                item = QListWidgetItem()
+                item.setData(Qt.ItemDataRole.UserRole, agent.id)
+                self.mission_agents.addItem(item)
+                self.mission_agents.setItemWidget(item, card)
+                item.setSizeHint(card.sizeHint())
 
     def _open_agent_chat(self, agent_name: str) -> None:
         self._select_navigation("Chat")
