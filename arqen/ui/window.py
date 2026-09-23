@@ -25,6 +25,7 @@ from PyQt6.QtWidgets import (
     QTabWidget,
     QStackedWidget,
     QFileDialog,
+    QDialogButtonBox,
 )
 from PyQt6.QtCore import QEvent, QObject, QSettings, QThread, QTimer, Qt, QUrl, QPoint, QSize, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QColor, QBrush, QPainter, QPalette, QPen, QPixmap
@@ -1141,11 +1142,25 @@ class ArqenWindow(QMainWindow):
         if not accepted:
             return
         available = [item["name"] for item in self.engine.tools.describe()]
-        tools_text, accepted = QInputDialog.getText(
-            self, "New agent", f"Allowed tools, comma-separated (available: {', '.join(available)}):"
-        )
-        if not accepted:
+        tools_dialog = QDialog(self)
+        tools_dialog.setWindowTitle("New agent — Allowed tools")
+        tools_layout = QVBoxLayout(tools_dialog)
+        tools_layout.addWidget(QLabel("Select tools by entering their names, separated by commas."))
+        available_view = QTextEdit(readOnly=True)
+        available_view.setPlainText("\n".join(available))
+        available_view.setMaximumHeight(150)
+        tools_layout.addWidget(available_view)
+        tools_layout.addWidget(QLabel("Allowed tools"))
+        tools_input = QLineEdit()
+        tools_input.setPlaceholderText("e.g. system_status,current_time")
+        tools_layout.addWidget(tools_input)
+        tool_buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        tool_buttons.accepted.connect(tools_dialog.accept)
+        tool_buttons.rejected.connect(tools_dialog.reject)
+        tools_layout.addWidget(tool_buttons)
+        if tools_dialog.exec() != QDialog.DialogCode.Accepted:
             return
+        tools_text = tools_input.text()
         allowed_tools = tuple(item.strip() for item in tools_text.split(",") if item.strip())
         unknown = sorted(set(allowed_tools) - set(available))
         if unknown:
