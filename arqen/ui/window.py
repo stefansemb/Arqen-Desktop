@@ -1011,12 +1011,19 @@ class ArqenWindow(QMainWindow):
             self.mission_workflows.addItem(item)
 
     def refresh_mission_workflow_runs(self) -> None:
+        selected_id = None
+        if hasattr(self, "mission_workflow_runs") and self.mission_workflow_runs.currentItem() is not None:
+            selected_id = self.mission_workflow_runs.currentItem().data(Qt.ItemDataRole.UserRole)
         self.mission_workflow_runs.clear()
         for run in self.mission_store.list_workflow_runs():
             item = QListWidgetItem(f"[{run.status.upper()}] {run.workflow_id} // step {run.current_step} // {run.id[:8]}")
             item.setData(Qt.ItemDataRole.UserRole, run.id)
             item.setToolTip("\n".join(run.results) or "No results yet")
             self.mission_workflow_runs.addItem(item)
+            if run.id == selected_id:
+                self.mission_workflow_runs.setCurrentItem(item)
+        if selected_id and self.mission_workflow_runs.currentItem() is not None:
+            self._show_workflow_run(self.mission_workflow_runs.currentItem())
 
     def _create_mission_workflow(self) -> None:
         name, accepted = QInputDialog.getText(self, "New workflow", "Name:")
