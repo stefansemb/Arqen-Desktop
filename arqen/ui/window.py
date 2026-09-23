@@ -541,10 +541,13 @@ class ArqenWindow(QMainWindow):
         panel_layout.addWidget(self.mission_agents)
         agent_row = QHBoxLayout()
         new_agent = QPushButton("NY AGENT")
+        edit_agent = QPushButton("REDIGERA")
         toggle_agent = QPushButton("AKTIVERA/INAKTIVERA")
         new_agent.clicked.connect(self._create_mission_agent)
+        edit_agent.clicked.connect(self._edit_mission_agent)
         toggle_agent.clicked.connect(self._toggle_mission_agent)
         agent_row.addWidget(new_agent)
+        agent_row.addWidget(edit_agent)
         agent_row.addWidget(toggle_agent)
         panel_layout.addLayout(agent_row)
         self.mission_tasks = QListWidget()
@@ -623,6 +626,35 @@ class ArqenWindow(QMainWindow):
         if agent is None:
             return
         self.mission_store.save_agent(Agent(agent.id, agent.name, agent.role, agent.runtime, not agent.enabled))
+        self.refresh_mission_agents()
+
+    def _edit_mission_agent(self) -> None:
+        item = self.mission_agents.currentItem()
+        if item is None:
+            return
+        agent = self.mission_store.get_agent(item.data(Qt.ItemDataRole.UserRole))
+        if agent is None:
+            return
+        name, accepted = QInputDialog.getText(self, "Redigera agent", "Namn:", text=agent.name)
+        if not accepted or not name.strip():
+            return
+        role, accepted = QInputDialog.getText(self, "Redigera agent", "Roll:", text=agent.role)
+        if not accepted or not role.strip():
+            return
+        runtime, accepted = QInputDialog.getItem(self, "Redigera agent", "Runtime:", ["arqen", "hermes"], max(0, ["arqen", "hermes"].index(agent.runtime)), False)
+        if not accepted:
+            return
+        current_tools = ", ".join(agent.allowed_tools)
+        tools_text, accepted = QInputDialog.getText(self, "Redigera agent", "Tillåtna verktyg:", text=current_tools)
+        if not accepted:
+            return
+        available = {entry["name"] for entry in self.engine.tools.describe()}
+        allowed_tools = tuple(value.strip() for value in tools_text.split(",") if value.strip())
+        unknown = sorted(set(allowed_tools) - available)
+        if unknown:
+            QMessageBox.warning(self, "Mission Control", f"Okända verktyg: {', '.join(unknown)}")
+            return
+        self.mission_store.save_agent(Agent(agent.id, name.strip(), role.strip(), runtime, agent.enabled, allowed_tools))
         self.refresh_mission_agents()
 
     def refresh_mission_tasks(self) -> None:
