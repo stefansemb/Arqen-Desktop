@@ -679,8 +679,8 @@ class ArqenWindow(QMainWindow):
         button.setCursor(Qt.CursorShape.PointingHandCursor)
         if primary:
             button.setStyleSheet(
-                "QPushButton { background: #b7ff18; color: #0b0d0e; border: none; border-radius: 5px; padding: 9px 14px; font-weight: 700; }"
-                "QPushButton:hover { background: #d0ff62; } QPushButton:pressed { background: #93d900; }"
+                "QPushButton { background: #111516; color: #d8ff75; border: 1px solid #b7ff18; border-radius: 5px; padding: 9px 14px; font-weight: 700; }"
+                "QPushButton:hover { background: #1b2418; color: #e7ffad; } QPushButton:pressed { background: #27351e; }"
             )
         else:
             button.setStyleSheet(
