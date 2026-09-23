@@ -420,7 +420,7 @@ class ArqenWindow(QMainWindow):
         for label, icon in (("Agents", "♙"), ("Activity", "≋"), ("Memory", "▤")):
             self._add_navigation_button(navigation_layout, label, icon)
         navigation_layout.addWidget(QLabel("OPERATIONS", objectName="navSection"))
-        for label, icon in (("Schedules", "◷"), ("Content", "◇")):
+        for label, icon in (("Tasks", "✓"), ("Workflows", "⌘"), ("Schedules", "◷"), ("Content", "◇")):
             self._add_navigation_button(navigation_layout, label, icon)
         navigation_layout.addStretch(1)
         settings_nav = QPushButton("⚙  Settings")
