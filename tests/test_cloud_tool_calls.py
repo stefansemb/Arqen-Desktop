@@ -60,6 +60,14 @@ def test_tool_result_without_call_id_stays_ordinary_context() -> None:
     assert "from keyword fallback" in chat[0]["content"]
 
 
+def test_gpt_56_disables_reasoning_for_chat_completion_tools() -> None:
+    provider = OpenAICompatibleProvider("https://example.invalid", "gpt-5.6", 1.0, "k", "openai")
+    request = provider._request([], [{"type": "function"}], stream=False)
+    import json
+
+    assert json.loads(request.data)["reasoning_effort"] == "none"
+
+
 class ToolThenAnswerProvider:
     """Asks for the tool once, then answers using its result."""
 

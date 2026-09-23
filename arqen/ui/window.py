@@ -1137,9 +1137,9 @@ class ArqenWindow(QMainWindow):
         profile_form.addRow("Beskrivning", profile_hint)
         profile_descriptions = {
             "private": "Lokal och privat. Använder Ollama utan moln-fallback.",
-            "fast": "Snabb vardagsprofil. Använder OpenRouter med Ollama som reserv.",
+            "fast": "Snabb vardagsprofil. Använder OpenRouter utan automatisk fallback.",
             "important": "För viktigare uppgifter. Använder OpenAI utan automatisk fallback.",
-            "creative": "För idéer, texter och kreativa arbetsflöden. Bildgenerering kan kopplas till profilen senare.",
+            "creative": "För idéer, texter och kreativa arbetsflöden via Gemini.",
         }
         profile_hint.setText(profile_descriptions[profile.currentData()])
         profile.currentIndexChanged.connect(
@@ -1193,6 +1193,16 @@ class ArqenWindow(QMainWindow):
         model.clear()
         model.addItem(f"[{config.name.upper()}] {config.model}", config.model)
         model.setCurrentText(config.model)
+
+        # Quick profiles are presets: selecting one should apply its provider,
+        # model and connection settings immediately.  Saving must not depend
+        # on the user remembering a second "TILLÄMPA PROFIL" click.
+        profile.currentIndexChanged.connect(
+            lambda _: self.apply_provider_profile(
+                profile.currentData(), provider, model, base_url, timeout, api_key,
+                fallback_enabled, fallback_provider, fallback_timeout,
+            )
+        )
 
         apply_profile = QPushButton("TILLÄMPA PROFIL")
         apply_profile.setObjectName("secondaryButton")
@@ -1259,9 +1269,9 @@ class ArqenWindow(QMainWindow):
     def apply_provider_profile(self, profile: str, provider: QComboBox, model: QComboBox, base_url: QLineEdit, timeout: QLineEdit, api_key: QLineEdit, fallback_enabled: QCheckBox, fallback_provider: QComboBox, fallback_timeout: QLineEdit) -> None:
         presets = {
             "private": ("local", "", "http://127.0.0.1:11434/v1", 60.0, False, ""),
-            "fast": ("openrouter", "openai/gpt-5.6-luna", "https://openrouter.ai/api/v1", 120.0, True, "local"),
+            "fast": ("openrouter", "xiaomi/mimo-v2.6-pro", "https://openrouter.ai/api/v1", 120.0, False, ""),
             "important": ("openai", "gpt-5.6", "https://api.openai.com/v1", 120.0, False, ""),
-            "creative": ("openrouter", "openai/gpt-5.6-luna", "https://openrouter.ai/api/v1", 120.0, True, "local"),
+            "creative": ("gemini", "gemini-3.1-flash-lite", "https://generativelanguage.googleapis.com/v1beta", 120.0, False, ""),
         }
         name, preset_model, url, wait, fallback, reserve = presets[profile]
         provider.setCurrentIndex(max(0, provider.findData(name)))

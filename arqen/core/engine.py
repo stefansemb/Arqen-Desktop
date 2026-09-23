@@ -1,4 +1,5 @@
 import re
+import json
 
 from arqen.core.contracts import Message, ToolRequest, Usage
 from arqen.core.tool_protocol import parse_tool_request
@@ -129,7 +130,16 @@ class ConversationEngine:
             return document_response
         self._add_desktop_context()
         self.messages.append(Message(role="user", content=prompt))
-        return self._run_tool_loop(prompt)
+        # Persist the user's turn before any provider call.  A provider error
+        # must not make the latest prompt disappear from the session.
+        self._save_session()
+        try:
+            return self._run_tool_loop(prompt)
+        except Exception:
+            # Keep the conversation state, including any completed tool calls,
+            # available for inspection and retry after a failed provider call.
+            self._save_session()
+            raise
 
     def _cancelled(self) -> bool:
         return bool(self.should_cancel and self.should_cancel())
@@ -167,24 +177,46 @@ class ConversationEngine:
                 return response.content
 
             self.last_response_speakable = False
-            if self.on_tool_request:
-                self.on_tool_request(request.name)
             if response is not None and response.tool_calls:
                 self.messages.append(Message(
                     role="assistant",
                     content=response.content,
                     tool_calls=response.tool_calls,
                 ))
-            result = self.executor.execute(request.name, request.arguments)
-            if result.confirmation_required:
-                if self.on_confirmation_required:
-                    self.on_confirmation_required(request.name, request.arguments)
-                content = f"Jag behöver din bekräftelse innan jag kör verktyget '{request.name}'."
-                self.messages.append(Message(role="tool", content=content, tool_call_id=request.call_id))
-                self._save_session()
-                return content
-            self.messages.append(Message(role="tool", content=result.output, tool_call_id=request.call_id))
-            last_content = result.output
+            # A provider may return several tool calls in one assistant turn.
+            # Every call must receive a matching tool message before the next
+            # provider request, otherwise OpenAI rejects the conversation.
+            requests = [request]
+            if response is not None and len(response.tool_calls) > 1:
+                requests = []
+                for raw_call in response.tool_calls:
+                    function = raw_call.get("function", {}) if isinstance(raw_call, dict) else {}
+                    name = str(function.get("name") or "").strip()
+                    if not name:
+                        continue
+                    raw_arguments = function.get("arguments", {})
+                    if isinstance(raw_arguments, str):
+                        try:
+                            arguments = json.loads(raw_arguments) if raw_arguments.strip() else {}
+                        except json.JSONDecodeError:
+                            arguments = {}
+                    else:
+                        arguments = raw_arguments if isinstance(raw_arguments, dict) else {}
+                    requests.append(ToolRequest(name, arguments, raw_call.get("id")))
+
+            for current_request in requests:
+                if self.on_tool_request:
+                    self.on_tool_request(current_request.name)
+                result = self.executor.execute(current_request.name, current_request.arguments)
+                if result.confirmation_required:
+                    if self.on_confirmation_required:
+                        self.on_confirmation_required(current_request.name, current_request.arguments)
+                    content = f"Jag behöver din bekräftelse innan jag kör verktyget '{current_request.name}'."
+                    self.messages.append(Message(role="tool", content=content, tool_call_id=current_request.call_id))
+                    self._save_session()
+                    return content
+                self.messages.append(Message(role="tool", content=result.output, tool_call_id=current_request.call_id))
+                last_content = result.output
             if not native:
                 # Without native tool calling the model cannot read the result,
                 # so the tool output is the answer.

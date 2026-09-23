@@ -43,6 +43,11 @@ class OpenAICompatibleProvider(AIProvider):
 
     def _request(self, messages: list[Message], tools: list[dict[str, Any]] | None, stream: bool) -> Request:
         payload: dict[str, Any] = {"model": self.model, "messages": self._chat_messages(messages)}
+        # GPT-5.6 rejects function tools in Chat Completions unless reasoning
+        # is explicitly disabled.  Responses API support can be added later;
+        # this keeps the existing streaming/tool protocol working meanwhile.
+        if self.model.casefold().startswith("gpt-5.6"):
+            payload["reasoning_effort"] = "none"
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
