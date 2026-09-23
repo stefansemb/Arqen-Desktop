@@ -74,6 +74,10 @@ class ArqenRequestHandler(BaseHTTPRequestHandler):
                 tasks = self.server.mission_store.list_tasks()
                 self._send_json(HTTPStatus.OK, {"data": [self._as_json(item) for item in tasks]})
                 return
+            if path == "/api/v1/mission/activity":
+                events = self.server.mission_store.list_all_events()
+                self._send_json(HTTPStatus.OK, {"data": [self._as_json(item) for item in events]})
+                return
             if path == "/api/v1/mission/agents":
                 agents = self.server.mission_store.list_agents()
                 data = []

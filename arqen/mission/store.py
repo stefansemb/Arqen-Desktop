@@ -145,6 +145,11 @@ class MissionStore:
             rows = db.execute("SELECT * FROM events WHERE task_id = ? ORDER BY created_at", (task_id,)).fetchall()
         return [Event(row["id"], row["task_id"], row["kind"], row["message"], row["created_at"], json.loads(row["payload"])) for row in rows]
 
+    def list_all_events(self, limit: int = 100) -> list[Event]:
+        with self._connect() as db:
+            rows = db.execute("SELECT * FROM events ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+        return [Event(row["id"], row["task_id"], row["kind"], row["message"], row["created_at"], json.loads(row["payload"])) for row in rows]
+
     def save_approval(self, approval: Approval) -> None:
         with self._connect() as db:
             db.execute("INSERT OR REPLACE INTO approvals VALUES (?, ?, ?, ?, ?, ?)",

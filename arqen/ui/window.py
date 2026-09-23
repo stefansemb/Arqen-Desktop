@@ -554,6 +554,9 @@ class ArqenWindow(QMainWindow):
         workflow_row.addWidget(run_workflow)
         workflow_row.addWidget(resume_workflow)
         panel_layout.addLayout(workflow_row)
+        panel_layout.addWidget(QLabel("AKTIVITET"))
+        self.mission_activity = QListWidget()
+        panel_layout.addWidget(self.mission_activity)
         panel_layout.addWidget(QLabel("SCHEMAN"))
         self.mission_schedules = QListWidget()
         panel_layout.addWidget(self.mission_schedules)
@@ -613,6 +616,12 @@ class ArqenWindow(QMainWindow):
         self.refresh_mission_agents()
         self.refresh_mission_schedules()
         self.refresh_mission_workflows()
+        self.refresh_mission_activity()
+
+    def refresh_mission_activity(self) -> None:
+        self.mission_activity.clear()
+        for event in self.mission_store.list_all_events(50):
+            self.mission_activity.addItem(f"{event.created_at} [{event.kind}] {event.message}")
         self.refresh_mission_workflow_runs()
 
     def refresh_mission_workflows(self) -> None:
