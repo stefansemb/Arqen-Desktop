@@ -402,16 +402,26 @@ class ArqenWindow(QMainWindow):
         layout = QHBoxLayout(root)
         navigation = QFrame(objectName="panel")
         navigation.setFixedWidth(132)
+        navigation.setStyleSheet(
+            "QFrame#panel { background: #0e1115; border-right: 1px solid #20262b; }"
+            "QLabel#navSection { color: #657078; font-size: 9px; letter-spacing: 1px; padding-top: 14px; }"
+            "QPushButton#navButton { background: transparent; color: #8d969d; border: none; text-align: left; padding: 7px 8px; border-radius: 5px; }"
+            "QPushButton#navButton:hover { background: #171d21; color: #dbe2df; }"
+        )
         navigation_layout = QVBoxLayout(navigation)
         navigation_layout.addWidget(QLabel("ARQEN", objectName="title"))
         navigation_layout.addWidget(QLabel("MISSION CONTROL"))
-        for label in ("Dashboard", "Tasks", "Workflows", "Agents", "Activity", "Memory", "Content"):
-            button = QPushButton(label)
-            button.setObjectName("navButton")
-            button.clicked.connect(lambda _, name=label: self._select_navigation(name))
-            navigation_layout.addWidget(button)
+        navigation_layout.addWidget(QLabel("OVERVIEW", objectName="navSection"))
+        for label, icon in (("Dashboard", "⌂"), ("Tasks", "▣"), ("Workflows", "⌘")):
+            self._add_navigation_button(navigation_layout, label, icon)
+        navigation_layout.addWidget(QLabel("SYSTEM", objectName="navSection"))
+        for label, icon in (("Agents", "♙"), ("Activity", "≋"), ("Memory", "▤")):
+            self._add_navigation_button(navigation_layout, label, icon)
+        navigation_layout.addWidget(QLabel("CONTENT", objectName="navSection"))
+        for label, icon in (("Content", "◇"),):
+            self._add_navigation_button(navigation_layout, label, icon)
         navigation_layout.addStretch(1)
-        settings_nav = QPushButton("Settings")
+        settings_nav = QPushButton("⚙  Settings")
         settings_nav.setObjectName("navButton")
         settings_nav.clicked.connect(self.open_settings)
         navigation_layout.addWidget(settings_nav)
@@ -548,6 +558,13 @@ class ArqenWindow(QMainWindow):
         self._loading_timer.setInterval(350)
         self._loading_timer.timeout.connect(self._animate_loading)
         self.refresh_sessions()
+
+    def _add_navigation_button(self, layout: QVBoxLayout, label: str, icon: str) -> None:
+        button = QPushButton(f"{icon}  {label}")
+        button.setObjectName("navButton")
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        button.clicked.connect(lambda _, name=label: self._select_navigation(name))
+        layout.addWidget(button)
 
     def _select_navigation(self, name: str) -> None:
         self.status.setText(self.provider_status(f"{name.upper()}"))
