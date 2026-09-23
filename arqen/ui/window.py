@@ -659,7 +659,11 @@ class ArqenWindow(QMainWindow):
         self.mission_workflows = QListWidget()
         page_layout.addWidget(self.mission_workflows)
         self.mission_workflow_runs = QListWidget()
+        self.mission_workflow_runs.itemClicked.connect(self._show_workflow_run)
         page_layout.addWidget(self.mission_workflow_runs)
+        self.mission_workflow_details = QTextEdit(readOnly=True)
+        self.mission_workflow_details.setPlaceholderText("Select a workflow run to view its results.")
+        page_layout.addWidget(self.mission_workflow_details)
         row = QHBoxLayout()
         for index, (label, handler) in enumerate((("NEW WORKFLOW", self._create_mission_workflow), ("RUN WORKFLOW", self._run_mission_workflow), ("RESUME RUN", self._resume_mission_workflow))):
             button = QPushButton(label)
@@ -668,6 +672,18 @@ class ArqenWindow(QMainWindow):
             row.addWidget(button)
         page_layout.addLayout(row)
         self.navigation_stack.addWidget(page)
+
+    def _show_workflow_run(self, item: QListWidgetItem) -> None:
+        run = self.mission_store.get_workflow_run(item.data(Qt.ItemDataRole.UserRole))
+        if run is None:
+            return
+        if not run.results:
+            self.mission_workflow_details.setPlainText(f"Status: {run.status}\nNo results yet.")
+            return
+        lines = [f"Status: {run.status}", f"Completed steps: {run.current_step}", ""]
+        for index, result in enumerate(run.results, 1):
+            lines.extend((f"STEP {index}", result, ""))
+        self.mission_workflow_details.setPlainText("\n".join(lines).rstrip())
 
     def _add_schedules_view(self) -> None:
         page = QWidget()
