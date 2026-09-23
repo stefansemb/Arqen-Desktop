@@ -3,6 +3,7 @@ import glob
 import os
 import shutil
 import subprocess
+import uuid
 from dataclasses import asdict, is_dataclass
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -12,7 +13,7 @@ from urllib.parse import urlparse
 from arqen.application.service import ArqenApplication
 from arqen.config import paths
 from arqen.config.settings import load_mission_runtime_config
-from arqen.mission import Approval, Event, MissionRunner, MissionStore, Task
+from arqen.mission import Approval, Event, MissionRunner, MissionStore, Schedule, Task
 
 
 class ArqenHTTPServer(ThreadingHTTPServer):
@@ -73,6 +74,10 @@ class ArqenRequestHandler(BaseHTTPRequestHandler):
             if path == "/api/v1/mission/approvals":
                 approvals = self.server.mission_store.list_approvals()
                 self._send_json(HTTPStatus.OK, {"data": [self._as_json(item) for item in approvals]})
+                return
+            if path == "/api/v1/mission/schedules":
+                schedules = self.server.mission_store.list_schedules()
+                self._send_json(HTTPStatus.OK, {"data": [self._as_json(item) for item in schedules]})
                 return
             if path.startswith("/api/v1/mission/tasks/"):
                 task_id = path.removeprefix("/api/v1/mission/tasks/").strip("/")
@@ -138,6 +143,15 @@ class ArqenRequestHandler(BaseHTTPRequestHandler):
                 approval = Approval(__import__("uuid").uuid4().hex, task_id, action, dict(payload.get("payload", {})))
                 self.server.mission_store.save_approval(approval)
                 self._send_json(HTTPStatus.CREATED, {"data": self._as_json(approval)})
+                return
+            if path == "/api/v1/mission/schedules":
+                name = str(payload.get("name", "")).strip()
+                prompt = str(payload.get("prompt", "")).strip()
+                if not name or not prompt or (not payload.get("cron") and not payload.get("run_at")):
+                    raise ValueError("name, prompt och cron eller run_at krävs.")
+                schedule = Schedule(uuid.uuid4().hex, name, prompt, payload.get("agent_id"), payload.get("cron"), payload.get("run_at"))
+                self.server.mission_store.save_schedule(schedule)
+                self._send_json(HTTPStatus.CREATED, {"data": self._as_json(schedule)})
                 return
             if path.startswith("/api/v1/mission/approvals/") and path.endswith("/decision"):
                 approval_id = path.removeprefix("/api/v1/mission/approvals/").removesuffix("/decision").strip("/")

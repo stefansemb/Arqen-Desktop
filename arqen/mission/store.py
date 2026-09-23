@@ -2,7 +2,7 @@ import json
 import sqlite3
 from pathlib import Path
 
-from arqen.mission.contracts import Agent, Approval, Event, Task, TaskStatus
+from arqen.mission.contracts import Agent, Approval, Event, Schedule, Task, TaskStatus
 
 
 class MissionStore:
@@ -38,6 +38,11 @@ class MissionStore:
                 CREATE TABLE IF NOT EXISTS approvals (
                     id TEXT PRIMARY KEY, task_id TEXT NOT NULL, action TEXT NOT NULL,
                     payload TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS schedules (
+                    id TEXT PRIMARY KEY, name TEXT NOT NULL, prompt TEXT NOT NULL,
+                    agent_id TEXT, cron TEXT, run_at TEXT, enabled INTEGER NOT NULL,
+                    created_at TEXT NOT NULL
                 );
             """)
             columns = {row["name"] for row in db.execute("PRAGMA table_info(agents)").fetchall()}
@@ -107,6 +112,21 @@ class MissionStore:
             db.execute("INSERT OR REPLACE INTO approvals VALUES (?, ?, ?, ?, ?, ?)",
                        (approval.id, approval.task_id, approval.action,
                         json.dumps(approval.payload), approval.status, approval.created_at))
+
+    def save_schedule(self, schedule: Schedule) -> None:
+        with self._connect() as db:
+            db.execute("INSERT OR REPLACE INTO schedules VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                       (schedule.id, schedule.name, schedule.prompt, schedule.agent_id,
+                        schedule.cron, schedule.run_at, int(schedule.enabled), schedule.created_at))
+
+    def list_schedules(self) -> list[Schedule]:
+        with self._connect() as db:
+            rows = db.execute("SELECT * FROM schedules ORDER BY name").fetchall()
+        return [Schedule(row["id"], row["name"], row["prompt"], row["agent_id"], row["cron"], row["run_at"], bool(row["enabled"]), row["created_at"]) for row in rows]
+
+    def set_schedule_enabled(self, schedule_id: str, enabled: bool) -> None:
+        with self._connect() as db:
+            db.execute("UPDATE schedules SET enabled = ? WHERE id = ?", (int(enabled), schedule_id))
 
     def get_approval(self, approval_id: str) -> Approval | None:
         with self._connect() as db:

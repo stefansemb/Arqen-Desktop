@@ -69,3 +69,15 @@ class Artifact:
     name: str
     path: str
     created_at: str = field(default_factory=now)
+
+
+@dataclass(frozen=True)
+class Schedule:
+    id: str
+    name: str
+    prompt: str
+    agent_id: str | None = None
+    cron: str | None = None
+    run_at: str | None = None
+    enabled: bool = True
+    created_at: str = field(default_factory=now)
