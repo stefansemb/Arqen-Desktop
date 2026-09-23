@@ -736,9 +736,19 @@ class ArqenWindow(QMainWindow):
         page_layout.addWidget(QLabel("User-approved long-term context."))
         self.memory_view_list = QListWidget()
         page_layout.addWidget(self.memory_view_list, 1)
+        refresh = QPushButton("REFRESH MEMORY")
+        self._style_page_action(refresh)
+        refresh.clicked.connect(self._refresh_memory_view)
+        page_layout.addWidget(refresh)
+        self._refresh_memory_view()
+        self.navigation_stack.addWidget(page)
+
+    def _refresh_memory_view(self) -> None:
+        if not hasattr(self, "memory_view_list"):
+            return
+        self.memory_view_list.clear()
         for item in MemoryStore().list():
             self.memory_view_list.addItem(str(item))
-        self.navigation_stack.addWidget(page)
 
     def _add_content_view(self) -> None:
         page = QWidget()
@@ -747,12 +757,22 @@ class ArqenWindow(QMainWindow):
         page_layout.addWidget(QLabel("Generated files and workflow artifacts."))
         self.content_view_list = QListWidget()
         page_layout.addWidget(self.content_view_list, 1)
+        refresh = QPushButton("REFRESH CONTENT")
+        self._style_page_action(refresh)
+        refresh.clicked.connect(self._refresh_content_view)
+        page_layout.addWidget(refresh)
+        self._refresh_content_view()
+        self.navigation_stack.addWidget(page)
+
+    def _refresh_content_view(self) -> None:
+        if not hasattr(self, "content_view_list"):
+            return
+        self.content_view_list.clear()
         root = data_dir()
         if root.exists():
             for path in sorted(root.rglob("*")):
                 if path.is_file() and path.name != "mission.sqlite3":
                     self.content_view_list.addItem(str(path.relative_to(root)))
-        self.navigation_stack.addWidget(page)
 
     def _add_navigation_button(self, layout: QVBoxLayout, label: str, icon: str) -> None:
         button = QPushButton(f"{icon}  {label}")
@@ -776,6 +796,10 @@ class ArqenWindow(QMainWindow):
         pages = {"Dashboard": 0, "Chat": 1, "Tasks": 2, "Workflows": 3, "Schedules": 4, "Agents": 5, "Activity": 6, "Memory": 7, "Content": 8, "Mission Control": getattr(self, "mission_page_index", 0)}
         if name in pages and hasattr(self, "navigation_stack"):
             self.navigation_stack.setCurrentIndex(pages[name])
+            if name == "Memory":
+                self._refresh_memory_view()
+            elif name == "Content":
+                self._refresh_content_view()
 
     def _create_mission_dock(self) -> None:
         """Create the first functional Mission Control surface."""
