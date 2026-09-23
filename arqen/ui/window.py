@@ -592,6 +592,7 @@ class ArqenWindow(QMainWindow):
         panel_layout.addWidget(self.mission_tasks, 1)
         panel_layout.addWidget(QLabel("VÄNTANDE GODKÄNNANDEN"))
         self.mission_approvals = QListWidget()
+        self.mission_approvals.itemClicked.connect(self._show_selected_approval)
         panel_layout.addWidget(self.mission_approvals)
         approval_row = QHBoxLayout()
         approve = QPushButton("GODKÄNN")
@@ -648,6 +649,14 @@ class ArqenWindow(QMainWindow):
                 self._show_mission_task()
                 return
         self.refresh_mission_workflow_runs()
+
+    def _show_selected_approval(self, item: QListWidgetItem) -> None:
+        approval = self.mission_store.get_approval(item.data(Qt.ItemDataRole.UserRole))
+        if approval:
+            self.mission_details.setPlainText(
+                f"Approval\nAction: {approval.action}\nTask: {approval.task_id}\nStatus: {approval.status}\n\n"
+                f"{json.dumps(approval.payload, ensure_ascii=False, indent=2)}"
+            )
 
     def refresh_mission_workflows(self) -> None:
         self.mission_workflows.clear()
