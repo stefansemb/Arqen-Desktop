@@ -140,4 +140,17 @@ def save_workspace_root(root: Path | str, path: Path | None = None) -> Path:
             data = {}
     data["workspace"] = "" if applied == APP_ROOT else str(applied)
     config_path.write_text(json.dumps(data, indent=2) + '\n', encoding="utf-8")
+
+
+def load_mission_runtime_config(path: Path | None = None) -> dict:
+    """Load optional Mission Control runtime settings without enabling them."""
+    config_path = path or config_dir() / "arqen.json"
+    if not config_path.exists():
+        return {}
+    try:
+        data = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    mission = data.get("mission", {})
+    return dict(mission) if isinstance(mission, dict) else {}
     return applied

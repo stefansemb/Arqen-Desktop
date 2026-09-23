@@ -1,4 +1,5 @@
 from arqen.mission import Agent, MissionStore
+from arqen.config.settings import load_mission_runtime_config
 
 
 def test_store_lists_agents_by_name(tmp_path):
@@ -7,3 +8,7 @@ def test_store_lists_agents_by_name(tmp_path):
     store.save_agent(Agent("orchestrator", "Orchestrator", "coordination"))
 
     assert [agent.id for agent in store.list_agents()] == ["orchestrator", "writer"]
+
+
+def test_missing_mission_runtime_config_is_safe(tmp_path):
+    assert load_mission_runtime_config(tmp_path / "missing.json") == {}

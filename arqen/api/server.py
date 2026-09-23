@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 
 from arqen.application.service import ArqenApplication
 from arqen.config import paths
+from arqen.config.settings import load_mission_runtime_config
 from arqen.mission import Approval, Event, MissionRunner, MissionStore, Task
 
 
@@ -20,7 +21,17 @@ class ArqenHTTPServer(ThreadingHTTPServer):
         self.application = application
         self.token = token
         self.mission_store = MissionStore(paths.data_dir() / "mission.sqlite3")
-        self.mission_runner = MissionRunner(self.mission_store, application._engine_factory)
+        runtimes = self._mission_runtimes()
+        self.mission_runner = MissionRunner(self.mission_store, application._engine_factory, runtimes)
+
+    def _mission_runtimes(self) -> dict[str, Any]:
+        config = load_mission_runtime_config()
+        hermes = config.get("hermes", {})
+        if not isinstance(hermes, dict) or not str(hermes.get("executable", "")).strip():
+            return {}
+        from arqen.mission import HermesRuntime
+        runtime = HermesRuntime(str(hermes["executable"]), hermes.get("working_dir"), float(hermes.get("timeout", 300)))
+        return {agent.id: runtime for agent in self.mission_store.list_agents() if agent.runtime == "hermes"}
 
 
 class ArqenRequestHandler(BaseHTTPRequestHandler):
