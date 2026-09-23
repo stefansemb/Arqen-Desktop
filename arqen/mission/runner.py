@@ -1,6 +1,6 @@
 from collections.abc import Callable
 
-from arqen.mission.contracts import Event, Task
+from arqen.mission.contracts import Approval, Event, Task
 from arqen.mission.runtime import AgentRuntime, ArqenRuntime
 from arqen.mission.store import MissionStore
 
@@ -30,6 +30,36 @@ class MissionRunner:
         self.store.update_task(task.id, "completed")
         self._event(task, "completed", "Task completed")
         return result
+
+    def request_approval(self, task_id: str, action: str, payload: dict) -> Approval:
+        task = self.store.get_task(task_id)
+        if task is None:
+            raise KeyError(f"Unknown mission task: {task_id}")
+        if task.status not in {"queued", "running"}:
+            raise ValueError(f"Task cannot request approval from status '{task.status}'")
+        approval = Approval(__import__("uuid").uuid4().hex, task_id, action, payload)
+        self.store.save_approval(approval)
+        self.store.update_task(task_id, "waiting_approval")
+        self._event(task, "approval_requested", action)
+        return approval
+
+    def resume(self, task_id: str) -> str:
+        task = self.store.get_task(task_id)
+        if task is None:
+            raise KeyError(f"Unknown mission task: {task_id}")
+        approvals = [item for item in self.store.list_approvals() if item.task_id == task_id]
+        if task.status != "waiting_approval" or not approvals:
+            raise ValueError("Task väntar inte på ett approval.")
+        latest = approvals[0]
+        if latest.status == "rejected":
+            self.store.update_task(task_id, "cancelled")
+            self._event(task, "approval_rejected", latest.action)
+            return "Task avbruten efter avslaget."
+        if latest.status != "approved":
+            raise ValueError("Approval väntar fortfarande på beslut.")
+        self._event(task, "approval_approved", latest.action)
+        self.store.update_task(task_id, "queued")
+        return self.run(task_id)
 
     def _event(self, task: Task, kind: str, message: str) -> None:
         self.store.add_event(Event.create(task.id, kind, message))
