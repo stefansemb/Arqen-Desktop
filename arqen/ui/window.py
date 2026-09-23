@@ -49,7 +49,8 @@ from arqen.ui.theme import CyberpunkGreenTheme
 from arqen.core.provider_metrics import ProviderMetrics
 from arqen.tools.speech import set_audio_level_callback
 from arqen.tools.microphone import MicrophoneRecorder
-from arqen.mission import Agent, MissionRunner, MissionStore, Task
+from arqen.mission import Agent, MissionRunner, MissionStore, Schedule, Task
+from uuid import uuid4
 
 
 class ChatBackgroundTextEdit(QTextEdit):
@@ -536,6 +537,17 @@ class ArqenWindow(QMainWindow):
         dock.setObjectName("missionControlDock")
         panel = QWidget()
         panel_layout = QVBoxLayout(panel)
+        panel_layout.addWidget(QLabel("SCHEMAN"))
+        self.mission_schedules = QListWidget()
+        panel_layout.addWidget(self.mission_schedules)
+        schedule_row = QHBoxLayout()
+        new_schedule = QPushButton("NYTT SCHEMA")
+        toggle_schedule = QPushButton("AKTIVERA/INAKTIVERA")
+        new_schedule.clicked.connect(self._create_mission_schedule)
+        toggle_schedule.clicked.connect(self._toggle_mission_schedule)
+        schedule_row.addWidget(new_schedule)
+        schedule_row.addWidget(toggle_schedule)
+        panel_layout.addLayout(schedule_row)
         panel_layout.addWidget(QLabel("AGENTER"))
         self.mission_agents = QListWidget()
         panel_layout.addWidget(self.mission_agents)
@@ -582,6 +594,49 @@ class ArqenWindow(QMainWindow):
         self.refresh_mission_tasks()
         self.refresh_mission_approvals()
         self.refresh_mission_agents()
+        self.refresh_mission_schedules()
+
+    def refresh_mission_schedules(self) -> None:
+        self.mission_schedules.clear()
+        for schedule in self.mission_store.list_schedules():
+            mode = schedule.cron or f"once: {schedule.run_at}"
+            state = "ON" if schedule.enabled else "OFF"
+            item = QListWidgetItem(f"[{state}] {schedule.name} // {mode}")
+            item.setData(Qt.ItemDataRole.UserRole, schedule.id)
+            self.mission_schedules.addItem(item)
+
+    def _create_mission_schedule(self) -> None:
+        name, accepted = QInputDialog.getText(self, "Nytt schema", "Namn:")
+        if not accepted or not name.strip():
+            return
+        prompt, accepted = QInputDialog.getMultiLineText(self, "Nytt schema", "Task-instruktion:")
+        if not accepted or not prompt.strip():
+            return
+        mode, accepted = QInputDialog.getItem(self, "Nytt schema", "Typ:", ["Cron", "Engångskörning"], 0, False)
+        if not accepted:
+            return
+        if mode == "Cron":
+            cron, accepted = QInputDialog.getText(self, "Nytt schema", "Cron (t.ex. 0 8 * * *):")
+            if not accepted or not cron.strip():
+                return
+            schedule = Schedule(uuid4().hex, name.strip(), prompt.strip(), cron=cron.strip())
+        else:
+            run_at, accepted = QInputDialog.getText(self, "Nytt schema", "Tid (ISO-8601 UTC):")
+            if not accepted or not run_at.strip():
+                return
+            schedule = Schedule(uuid4().hex, name.strip(), prompt.strip(), run_at=run_at.strip())
+        self.mission_store.save_schedule(schedule)
+        self.refresh_mission_schedules()
+
+    def _toggle_mission_schedule(self) -> None:
+        item = self.mission_schedules.currentItem()
+        if item is None:
+            return
+        schedule_id = item.data(Qt.ItemDataRole.UserRole)
+        schedule = next((item for item in self.mission_store.list_schedules() if item.id == schedule_id), None)
+        if schedule is not None:
+            self.mission_store.set_schedule_enabled(schedule.id, not schedule.enabled)
+            self.refresh_mission_schedules()
 
     def refresh_mission_agents(self) -> None:
         self.mission_agents.clear()
