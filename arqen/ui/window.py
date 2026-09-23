@@ -49,6 +49,7 @@ from arqen.ui.theme import CyberpunkGreenTheme
 from arqen.core.provider_metrics import ProviderMetrics
 from arqen.tools.speech import set_audio_level_callback
 from arqen.tools.microphone import MicrophoneRecorder
+from arqen.mission import MissionRunner, MissionStore, Task
 
 
 class ChatBackgroundTextEdit(QTextEdit):
@@ -502,12 +503,84 @@ class ArqenWindow(QMainWindow):
         self.fallback_count = 0
         self.provider_metrics = ProviderMetrics()
         self._create_stats_dock()
+        self._create_mission_dock()
         self._restore_window_geometry()
         self._loading_phase = 0
         self._loading_timer = QTimer(self)
         self._loading_timer.setInterval(350)
         self._loading_timer.timeout.connect(self._animate_loading)
         self.refresh_sessions()
+
+    def _create_mission_dock(self) -> None:
+        """Create the first functional Mission Control surface."""
+        self.mission_store = MissionStore(data_dir() / "mission.sqlite3")
+        self.mission_runner = MissionRunner(self.mission_store, lambda: self.engine)
+        dock = QDockWidget("MISSION CONTROL", self)
+        dock.setObjectName("missionControlDock")
+        panel = QWidget()
+        panel_layout = QVBoxLayout(panel)
+        self.mission_tasks = QListWidget()
+        self.mission_tasks.itemClicked.connect(self._show_mission_task)
+        panel_layout.addWidget(self.mission_tasks, 1)
+        create = QPushButton("NY TASK")
+        create.clicked.connect(self._create_mission_task)
+        run = QPushButton("KÖR VALD TASK")
+        run.clicked.connect(self._run_mission_task)
+        self.mission_details = QTextEdit(readOnly=True)
+        self.mission_details.setPlaceholderText("Välj en task för att se status och events.")
+        panel_layout.addWidget(self.mission_details)
+        panel_layout.addWidget(create)
+        panel_layout.addWidget(run)
+        dock.setWidget(panel)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock)
+        self.mission_dock = dock
+        self.refresh_mission_tasks()
+
+    def refresh_mission_tasks(self) -> None:
+        if not hasattr(self, "mission_tasks"):
+            return
+        self.mission_tasks.clear()
+        for task in self.mission_store.list_tasks():
+            item = QListWidgetItem(f"[{task.status.upper()}] {task.title}")
+            item.setData(Qt.ItemDataRole.UserRole, task.id)
+            self.mission_tasks.addItem(item)
+
+    def _selected_mission_task(self) -> Task | None:
+        item = self.mission_tasks.currentItem()
+        return self.mission_store.get_task(item.data(Qt.ItemDataRole.UserRole)) if item else None
+
+    def _show_mission_task(self) -> None:
+        task = self._selected_mission_task()
+        if task is None:
+            return
+        events = self.mission_store.list_events(task.id)
+        lines = [f"{task.title}\nStatus: {task.status}\n\n{task.prompt}", "", "Events:"]
+        lines.extend(f"{event.created_at}  {event.kind}: {event.message}" for event in events)
+        self.mission_details.setPlainText("\n".join(lines))
+
+    def _create_mission_task(self) -> None:
+        title, accepted = QInputDialog.getText(self, "Ny Mission Control-task", "Titel:")
+        if not accepted or not title.strip():
+            return
+        prompt, accepted = QInputDialog.getMultiLineText(self, "Ny Mission Control-task", "Uppgift:")
+        if not accepted or not prompt.strip():
+            return
+        task = Task.create(title.strip(), prompt.strip())
+        self.mission_store.save_task(task)
+        from arqen.mission import Event
+        self.mission_store.add_event(Event.create(task.id, "created", "Task created"))
+        self.refresh_mission_tasks()
+
+    def _run_mission_task(self) -> None:
+        task = self._selected_mission_task()
+        if task is None:
+            return
+        try:
+            self.mission_runner.run(task.id)
+        except Exception as exc:
+            QMessageBox.warning(self, "Mission Control", str(exc))
+        self.refresh_mission_tasks()
+        self._show_mission_task()
 
     def show_session_menu(self, position) -> None:
         item = self.session_list.itemAt(position)
