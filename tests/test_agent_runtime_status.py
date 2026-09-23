@@ -24,3 +24,13 @@ def test_runtime_status_reports_ready_agent(tmp_path):
 
     assert status["status"] == "ready"
     assert status["configured"] is True
+
+
+def test_arqen_agent_uses_default_runtime(tmp_path):
+    store = MissionStore(tmp_path / "mission.sqlite3")
+    store.save_agent(Agent("writer", "Writer", "content", runtime="arqen"))
+    from arqen.mission import Task
+    task = Task.create("Write", "skriv", agent_id="writer")
+    store.save_task(task)
+
+    assert MissionRunner(store, Runtime()).run(task.id) == "skriv"

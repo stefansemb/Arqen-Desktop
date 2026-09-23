@@ -76,6 +76,8 @@ class MissionRunner:
         if not agent.enabled:
             raise ValueError(f"Agenten '{agent.name}' är inaktiv.")
         runtime = self.runtimes.get(agent.id)
+        if runtime is None and agent.runtime == "arqen":
+            runtime = self.runtime
         if runtime is None:
             raise ValueError(f"Ingen runtime är konfigurerad för agenten '{agent.name}'.")
         return runtime
@@ -84,7 +86,7 @@ class MissionRunner:
         agent = self.store.get_agent(agent_id)
         if agent is None:
             raise KeyError(f"Unknown mission agent: {agent_id}")
-        configured = agent_id in self.runtimes
+        configured = agent_id in self.runtimes or agent.runtime == "arqen"
         return {
             "agent_id": agent.id,
             "name": agent.name,
