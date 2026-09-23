@@ -99,6 +99,15 @@ class MissionStore:
             db.execute("UPDATE tasks SET status = ?, updated_at = ?, error = ? WHERE id = ?",
                        (status, now(), error, task_id))
 
+    def claim_task(self, task_id: str) -> bool:
+        from arqen.mission.contracts import now
+        with self._connect() as db:
+            result = db.execute(
+                "UPDATE tasks SET status = 'running', updated_at = ?, error = NULL WHERE id = ? AND status = 'queued'",
+                (now(), task_id),
+            )
+        return result.rowcount == 1
+
     def add_event(self, event: Event) -> None:
         with self._connect() as db:
             db.execute("INSERT INTO events VALUES (?, ?, ?, ?, ?, ?)",

@@ -20,9 +20,12 @@ class MissionRunner:
             raise KeyError(f"Unknown mission task: {task_id}")
         if task.status not in {"queued", "failed"}:
             raise ValueError(f"Task cannot be run from status '{task.status}'")
+        if task.status == "queued" and not self.store.claim_task(task.id):
+            raise ValueError(f"Task '{task.id}' kunde inte claimas.")
         runtime = self._runtime_for(task)
 
-        self.store.update_task(task.id, "running")
+        if task.status == "failed":
+            self.store.update_task(task.id, "running")
         self._event(task, "started", "Task started")
         try:
             if isinstance(runtime, ArqenRuntime):
