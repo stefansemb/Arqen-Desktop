@@ -1,42 +1,61 @@
 # Arqen Desktop
 
-En fristående desktop-assistent byggd stegvis med egen kärna och egen identitet.
+Arqen Desktop är en lokal PyQt6-baserad AI-assistent med mörkt gränssnitt,
+limegröna accenter och en operativ Mission Control-vy för tasks, workflows,
+schedules, agents och aktivitet.
 
-Den första visuella riktningen är ett mörkt cyberpunkgränssnitt med gröna
-accenter. Temastöd kan läggas till senare.
+Arqen är byggt för att vara lokalt, kontrollerbart och utbyggbart. Molnmodeller
+är valfria; lokal körning via Ollama eller LM Studio fungerar som grund.
 
-## Första milstolpen
+## Funktioner
 
-Den första versionen fokuserar på en textbaserad kärna:
+- Chattar, sessionshantering och utbytbara AI-providers.
+- Ollama/LM Studio, OpenRouter, OpenAI, Gemini, Claude och Arqen Remote.
+- Streaming, avbrytning, native tool calls och fallback-provider.
+- Verktyg för system, filer, dokument, webben, browser, väder och tal.
+- Bekräftelser för skrivande, radering, flytt, undo och bildgenerering.
+- Mission Control med task-kö, workflows, schedules, agents och activity.
+- Task-timeout, recovery, approvals och resultatlagring.
+- Memory 2.0 med retain, recall, reflect, proveniens, status och confidence.
+- Tool Gateway med agentpolicies, risknivåer, katalog och lokal auditlogg.
+- Lokal API v1 för sessioner, meddelanden, status, Mission Control och tools.
+- Svensk Edge TTS, röstläge, stoppknapp och ljudnivåstyrd visualisering.
 
-- konversationsmeddelanden
-- utbytbara AI-providers
-- verktygsregister
-- explicit säkerhetskontroll före verktygskörning
-- lokal AI-provider via Ollama/LM Studio-kompatibelt API
-
-Röst, vision, minne och desktop-automation läggs till först när kärnan är stabil.
-
-Externa molnproviders läggs till som valfria adapters senare. Arqen ska inte kräva
-OpenRouter eller Gemini för att kunna köras.
-
-## Starta demo
-
-```powershell
-python -m arqen
-```
-
-När PyQt6 är installerat kan UI:t startas med:
+## Starta
 
 ```powershell
+python -m pip install -r requirements.txt
 python -m arqen.ui
 ```
 
-Kontrollera lokal provider med:
+Kärnan utan UI startas med `python -m arqen`. Kontrollera lokal provider med
+`python -m arqen.doctor`.
+
+Kopiera `config/arqen.example.json` till `config/arqen.json` och välj provider,
+modell och API-inställningar. API-nycklar sparas separat i secrets-konfiguration.
+
+## API och Mission Control
+
+Mission Control kör scheduler och task-worker i desktop-processen. Det lokala
+API:t använder Bearer-token när token är konfigurerad. Viktiga endpoints under
+`/api/v1` är `/sessions`, `/status`, `/health`, `/mission/tasks`,
+`/mission/workflows`, `/mission/schedules`, `/mission/agents`, `/mission/activity`,
+`/mission/approvals`, `/tools`, `/tools/policies` och `/tools/audit`.
+
+Se [MOBILE_API_PLAN.md](MOBILE_API_PLAN.md) för API-planen.
+
+## Utveckling
 
 ```powershell
-python -m arqen.doctor
+python -m compileall -q arqen
+python -m pytest -q
 ```
 
-Kopiera `config/arqen.example.json` till `config/arqen.json` och ändra modell
-eller provider vid behov. Om filen saknas används lokal provider som standard.
+Aktuell överlämning finns i [HANDOVER.md](HANDOVER.md). Design- och
+funktionsbeslut finns i [DESIGN.md](DESIGN.md) och [FEATURE_INVENTORY.md](FEATURE_INVENTORY.md).
+
+## Status
+
+Kärna, Mission Control, Memory 2.0 och den första Tool Gateway-versionen
+fungerar lokalt. Nästa större steg är djupare policyhantering, UI för
+gateway-administration och mobilklientens bekräftelseflöden.
