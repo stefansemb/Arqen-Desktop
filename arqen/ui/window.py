@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (
     QMenu,
     QTabWidget,
     QStackedWidget,
+    QScrollArea,
     QFileDialog,
     QDialogButtonBox,
 )
@@ -718,7 +719,8 @@ class ArqenWindow(QMainWindow):
         page = QWidget()
         page_layout = QVBoxLayout(page)
         page_layout.setContentsMargins(18, 18, 18, 18)
-        page_layout.setSpacing(10)
+        page_layout.setSpacing(4)
+        page_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         page_layout.addWidget(QLabel("WORKFLOWS", objectName="title"))
         page_layout.addWidget(QLabel("Build and run multi-agent pipelines.", objectName="status"))
         page_layout.addWidget(QLabel("AVAILABLE WORKFLOWS", objectName="sectionLabel"))
@@ -748,9 +750,11 @@ class ArqenWindow(QMainWindow):
         row = QHBoxLayout()
         for index, (label, handler) in enumerate((("NEW WORKFLOW", self._create_mission_workflow), ("RUN WORKFLOW", self._run_mission_workflow), ("RESUME RUN", self._resume_mission_workflow))):
             button = QPushButton(label)
+            button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
             self._style_page_action(button, primary=index == 0)
             button.clicked.connect(handler)
             row.addWidget(button)
+        row.addStretch(1)
         page_layout.addLayout(row)
         self.navigation_stack.addWidget(page)
 
@@ -787,9 +791,11 @@ class ArqenWindow(QMainWindow):
         row = QHBoxLayout()
         for index, (label, handler) in enumerate((("NEW SCHEDULE", self._create_mission_schedule), ("ENABLE/DISABLE", self._toggle_mission_schedule), ("DELETE SCHEDULE", self._delete_mission_schedule))):
             button = QPushButton(label)
+            button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
             self._style_page_action(button, primary=index == 0)
             button.clicked.connect(handler)
             row.addWidget(button)
+        row.addStretch(1)
         page_layout.addLayout(row)
         self.navigation_stack.addWidget(page)
 
@@ -797,13 +803,26 @@ class ArqenWindow(QMainWindow):
         page = QWidget()
         page_layout = QVBoxLayout(page)
         page_layout.setContentsMargins(18, 18, 18, 18)
-        page_layout.setSpacing(10)
-        page_layout.addWidget(QLabel("AGENTS", objectName="title"))
-        page_layout.addWidget(QLabel("Manage runtimes, tools and approval policies.", objectName="status"))
+        page_layout.setSpacing(4)
+        page_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        title = QLabel("AGENTS", objectName="title")
+        title.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        status = QLabel("Manage runtimes, tools and approval policies.", objectName="status")
+        status.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        page_layout.addWidget(title)
+        page_layout.addWidget(status)
+        divider = QFrame()
+        divider.setFrameShape(QFrame.Shape.HLine)
+        divider.setFixedHeight(1)
+        divider.setStyleSheet("background: #30383a; border: none;")
+        page_layout.addWidget(divider)
         self.nexus_card_host = QWidget()
         self.nexus_card_layout = QHBoxLayout(self.nexus_card_host)
         self.nexus_card_layout.setContentsMargins(0, 0, 0, 0)
-        page_layout.addWidget(self.nexus_card_host)
+        self.nexus_card_layout.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
+        self.nexus_card_host.setFixedHeight(162)
+        self.nexus_card_host.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        page_layout.addWidget(self.nexus_card_host, alignment=Qt.AlignmentFlag.AlignTop)
         self.agent_group_lists: dict[str, QListWidget] = {}
         for group in ("RESEARCH", "PRODUCTION", "DISTRIBUTION & REVIEW"):
             page_layout.addWidget(QLabel(group, objectName="sectionLabel"))
@@ -812,6 +831,8 @@ class ArqenWindow(QMainWindow):
             group_list.setResizeMode(QListWidget.ResizeMode.Adjust)
             group_list.setMovement(QListWidget.Movement.Static)
             group_list.setSpacing(10)
+            group_list.setGridSize(QSize(280, 170))
+            group_list.setUniformItemSizes(True)
             group_list.setWordWrap(True)
             group_list.setStyleSheet(
                 "QListWidget { background: transparent; border: none; }"
@@ -819,16 +840,23 @@ class ArqenWindow(QMainWindow):
             )
             group_list.itemClicked.connect(lambda _, source=group_list: setattr(self, "mission_agents", source))
             self.agent_group_lists[group] = group_list
-            page_layout.addWidget(group_list, 1)
+            group_list.setFixedHeight(170)
+            page_layout.addWidget(group_list)
         self.mission_agents = self.agent_group_lists["RESEARCH"]
         row = QHBoxLayout()
         for index, (label, handler) in enumerate((("NEW AGENT", self._create_mission_agent), ("EDIT", self._edit_mission_agent), ("ENABLE/DISABLE", self._toggle_mission_agent))):
             button = QPushButton(label)
+            button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
             self._style_page_action(button, primary=index == 0)
             button.clicked.connect(handler)
             row.addWidget(button)
+        row.addStretch(1)
         page_layout.addLayout(row)
-        self.navigation_stack.addWidget(page)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setWidget(page)
+        self.navigation_stack.addWidget(scroll)
 
     def _style_page_action(self, button: QPushButton, *, primary: bool = False) -> None:
         button.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -884,8 +912,10 @@ class ArqenWindow(QMainWindow):
         edit = QPushButton("EDIT")
         delete = QPushButton("DELETE")
         for button in (refresh, edit, delete):
+            button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
             self._style_page_action(button)
             actions.addWidget(button)
+        actions.addStretch(1)
         refresh.clicked.connect(self._refresh_memory_view)
         edit.clicked.connect(self._edit_memory_item)
         delete.clicked.connect(self._delete_memory_item)
@@ -1029,9 +1059,11 @@ class ArqenWindow(QMainWindow):
         new_workflow.clicked.connect(self._create_mission_workflow)
         run_workflow.clicked.connect(self._run_mission_workflow)
         resume_workflow.clicked.connect(self._resume_mission_workflow)
-        workflow_row.addWidget(new_workflow)
-        workflow_row.addWidget(run_workflow)
-        workflow_row.addWidget(resume_workflow)
+        for button in (new_workflow, run_workflow, resume_workflow):
+            button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+            self._style_page_action(button, primary=button is new_workflow)
+            workflow_row.addWidget(button)
+        workflow_row.addStretch(1)
         panel_layout.addLayout(workflow_row)
         panel_layout.addWidget(QLabel("ACTIVITY"))
         self.mission_activity = QListWidget()
@@ -1052,8 +1084,11 @@ class ArqenWindow(QMainWindow):
         toggle_schedule = QPushButton("ENABLE/DISABLE")
         new_schedule.clicked.connect(self._create_mission_schedule)
         toggle_schedule.clicked.connect(self._toggle_mission_schedule)
-        schedule_row.addWidget(new_schedule)
-        schedule_row.addWidget(toggle_schedule)
+        for button in (new_schedule, toggle_schedule):
+            button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+            self._style_page_action(button, primary=button is new_schedule)
+            schedule_row.addWidget(button)
+        schedule_row.addStretch(1)
         panel_layout.addLayout(schedule_row)
         panel_layout.addWidget(QLabel("AGENTS"))
         legacy_agents = QListWidget()
@@ -1495,8 +1530,7 @@ class ArqenWindow(QMainWindow):
             tools = ", ".join(agent.allowed_tools) or "no tools"
             approvals = ", ".join(agent.approval_tools) or "none"
             card = QFrame(objectName="panel")
-            card.setMinimumSize(250, 154)
-            card.setMaximumWidth(320)
+            card.setFixedSize(270, 154)
             card.setStyleSheet(
                 "QFrame#panel { background: #171d21; border: 1px solid #30383a; border-radius: 8px; }"
             )
