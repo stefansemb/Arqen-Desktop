@@ -5,8 +5,9 @@ from arqen.core.contracts import Message, ToolRequest, Usage
 from arqen.core.tool_protocol import parse_tool_request
 from arqen.providers.base import AIProvider
 from arqen.tools.executor import ToolExecutor
+from arqen.tools.gateway import ToolGateway
 from arqen.tools.registry import ToolRegistry
-from arqen.tools.schema import build_tool_schemas
+from arqen.tools.schema import build_relevant_tool_schemas
 from arqen.core.session_store import ChatSession, SessionStore
 from arqen.core.memory_store import MemoryStore
 from collections.abc import Callable
@@ -42,6 +43,7 @@ class ConversationEngine:
         self.provider = provider
         self.tools = tools or ToolRegistry()
         self.executor = ToolExecutor(self.tools)
+        self.gateway = ToolGateway(self.executor)
         self.on_tool_request = on_tool_request
         self.on_confirmation_required = on_confirmation_required
         self.on_partial_response = on_partial_response
@@ -153,7 +155,13 @@ class ConversationEngine:
         to act on it.
         """
         native = getattr(self.provider, "supports_tools", False)
-        tools = build_tool_schemas(self.tools) if native else None
+        tools = build_relevant_tool_schemas(
+            self.tools,
+            "\n".join(message.content for message in self.messages),
+            already_used=(message.tool_calls[0].get("function", {}).get("name", "")
+                          for message in self.messages
+                          if message.role == "assistant" and message.tool_calls),
+        ) if native else None
         direct_request = None if native else self._direct_safe_command(prompt)
         last_content = ""
 
@@ -207,7 +215,7 @@ class ConversationEngine:
             for current_request in requests:
                 if self.on_tool_request:
                     self.on_tool_request(current_request.name)
-                result = self.executor.execute(current_request.name, current_request.arguments)
+                result = self.gateway.execute(current_request.name, current_request.arguments)
                 if result.confirmation_required:
                     if self.on_confirmation_required:
                         self.on_confirmation_required(current_request.name, current_request.arguments)
@@ -320,7 +328,7 @@ class ConversationEngine:
                 continue
             label = {"user": "DU", "assistant": "ARQEN", "tool": "VERKTYG"}.get(message.role, message.role.upper())
             lines.extend([f"## {label}", message.content, ""])
-        result = self.executor.execute(
+        result = self.gateway.execute(
             "write_workspace_file",
             {"path": path, "content": "\n".join(lines)},
         )
@@ -348,7 +356,7 @@ class ConversationEngine:
             results = getattr(search_tool, "last_results", []) if search_tool else []
             if not 0 <= index < len(results):
                 return "Det resultatnumret finns inte i den senaste sökningen."
-            fetched = self.executor.execute("fetch_webpage", {"url": results[index][1]})
+            fetched = self.gateway.execute("fetch_webpage", {"url": results[index][1]})
             if not fetched.ok:
                 return fetched.output
             messages = [
@@ -373,7 +381,7 @@ class ConversationEngine:
         }.get(suffix)
         if tool_name is None:
             return f"Jag kan ännu inte sammanfatta filtypen: {suffix or 'okänd'}."
-        result = self.executor.execute(tool_name, {"path": path})
+            result = self.gateway.execute(tool_name, {"path": path})
         if not result.ok:
             return result.output
         document = result.output[:30_000]
@@ -400,7 +408,7 @@ class ConversationEngine:
             }.get(suffix)
             if tool_name is None:
                 return f"Jag kan inte jämföra filtypen: {path}"
-            result = self.executor.execute(tool_name, {"path": path})
+            result = self.gateway.execute(tool_name, {"path": path})
             if not result.ok:
                 return result.output
             contents.append(result.output[:20_000])
@@ -578,7 +586,7 @@ class ConversationEngine:
         loop back and can finish the task; the others have nothing to do with
         the output beyond showing it.
         """
-        result = self.executor.confirm_pending(accepted)
+        result = self.gateway.confirm_pending(accepted)
         self.messages.append(Message(role="tool", content=result.output))
         self.last_tool_output = result.output
         if not accepted or not getattr(self.provider, "supports_tools", False):

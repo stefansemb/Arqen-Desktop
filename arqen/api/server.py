@@ -67,6 +67,15 @@ class ArqenRequestHandler(BaseHTTPRequestHandler):
             if path == "/api/v1/status":
                 self._send_json(HTTPStatus.OK, {"data": self._as_json(self.server.application.status())})
                 return
+            if path == "/api/v1/tools":
+                self._send_json(HTTPStatus.OK, {"data": self.server.application.tool_catalog()})
+                return
+            if path == "/api/v1/tools/policies":
+                self._send_json(HTTPStatus.OK, {"data": self.server.application.tool_policies()})
+                return
+            if path == "/api/v1/tools/audit":
+                self._send_json(HTTPStatus.OK, {"data": self.server.application.tool_audit()})
+                return
             if path == "/api/v1/control/status":
                 self._send_json(HTTPStatus.OK, {"data": self._control_status()})
                 return

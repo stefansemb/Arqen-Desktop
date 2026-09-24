@@ -12,5 +12,5 @@ class ProviderConfig:
     api_key: str = ""
     fallback_enabled: bool = False
     fallback_provider: str = ""
-    fallback_timeout: float = 10.0
+    fallback_timeout: float = 90.0
     profile_name: str = ""

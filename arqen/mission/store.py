@@ -30,7 +30,7 @@ class MissionStore:
                 CREATE TABLE IF NOT EXISTS tasks (
                     id TEXT PRIMARY KEY, title TEXT NOT NULL, prompt TEXT NOT NULL,
                     status TEXT NOT NULL, agent_id TEXT, created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL, error TEXT, claimed_at TEXT,
+                    updated_at TEXT NOT NULL, error TEXT, result TEXT, claimed_at TEXT,
                     attempts INTEGER NOT NULL DEFAULT 0, max_attempts INTEGER NOT NULL DEFAULT 3,
                     schedule_id TEXT
                 );
@@ -72,6 +72,9 @@ class MissionStore:
             if task_columns and "claimed_at" not in task_columns:
                 db.execute("ALTER TABLE tasks ADD COLUMN claimed_at TEXT")
             task_columns = {row["name"] for row in db.execute("PRAGMA table_info(tasks)").fetchall()}
+            if task_columns and "result" not in task_columns:
+                db.execute("ALTER TABLE tasks ADD COLUMN result TEXT")
+            task_columns = {row["name"] for row in db.execute("PRAGMA table_info(tasks)").fetchall()}
             if task_columns and "attempts" not in task_columns:
                 db.execute("ALTER TABLE tasks ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0")
             if task_columns and "max_attempts" not in task_columns:
@@ -98,10 +101,15 @@ class MissionStore:
 
     def save_task(self, task: Task) -> None:
         with self._connect() as db:
-            db.execute("INSERT OR REPLACE INTO tasks VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                       (task.id, task.title, task.prompt, task.status, task.agent_id,
-                        task.created_at, task.updated_at, task.error, task.claimed_at,
-                        task.attempts, task.max_attempts, task.schedule_id))
+            db.execute(
+                "INSERT OR REPLACE INTO tasks "
+                "(id, title, prompt, status, agent_id, created_at, updated_at, error, "
+                "claimed_at, attempts, max_attempts, schedule_id, result) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (task.id, task.title, task.prompt, task.status, task.agent_id,
+                 task.created_at, task.updated_at, task.error, task.claimed_at,
+                 task.attempts, task.max_attempts, task.schedule_id, task.result),
+            )
 
     def get_task(self, task_id: str) -> Task | None:
         with self._connect() as db:
@@ -119,11 +127,15 @@ class MissionStore:
             rows = db.execute(query, params).fetchall()
         return [self._task(row) for row in rows]
 
-    def update_task(self, task_id: str, status: TaskStatus, error: str | None = None) -> None:
+    def delete_task(self, task_id: str) -> None:
+        with self._connect() as db:
+            db.execute("DELETE FROM tasks WHERE id = ? AND status IN ('queued', 'running', 'completed', 'failed', 'cancelled')", (task_id,))
+
+    def update_task(self, task_id: str, status: TaskStatus, error: str | None = None, result: str | None = None) -> None:
         from arqen.mission.contracts import now
         with self._connect() as db:
-            db.execute("UPDATE tasks SET status = ?, updated_at = ?, error = ?, claimed_at = CASE WHEN ? = 'running' THEN claimed_at ELSE NULL END WHERE id = ?",
-                       (status, now(), error, status, task_id))
+            db.execute("UPDATE tasks SET status = ?, updated_at = ?, error = ?, result = ?, claimed_at = CASE WHEN ? = 'running' THEN claimed_at ELSE NULL END WHERE id = ?",
+                       (status, now(), error, result, status, task_id))
 
     def claim_task(self, task_id: str) -> bool:
         from arqen.mission.contracts import now
@@ -206,6 +218,10 @@ class MissionStore:
         with self._connect() as db:
             db.execute("UPDATE schedules SET enabled = ? WHERE id = ?", (int(enabled), schedule_id))
 
+    def delete_schedule(self, schedule_id: str) -> None:
+        with self._connect() as db:
+            db.execute("DELETE FROM schedules WHERE id = ?", (schedule_id,))
+
     def mark_schedule_run(self, schedule_id: str, timestamp: str) -> None:
         with self._connect() as db:
             db.execute("UPDATE schedules SET last_run_at = ? WHERE id = ?", (timestamp, schedule_id))
@@ -234,7 +250,12 @@ class MissionStore:
 
     @staticmethod
     def _task(row: sqlite3.Row) -> Task:
-        return Task(row["id"], row["title"], row["prompt"], row["status"], row["agent_id"], row["created_at"], row["updated_at"], row["error"], row["claimed_at"], row["attempts"], row["max_attempts"], row["schedule_id"])
+        return Task(
+            id=row["id"], title=row["title"], prompt=row["prompt"], status=row["status"],
+            agent_id=row["agent_id"], created_at=row["created_at"], updated_at=row["updated_at"],
+            error=row["error"], result=row["result"], claimed_at=row["claimed_at"],
+            attempts=row["attempts"], max_attempts=row["max_attempts"], schedule_id=row["schedule_id"],
+        )
 
     def retry_task(self, task_id: str) -> bool:
         from arqen.mission.contracts import now

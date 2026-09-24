@@ -92,6 +92,15 @@ class ArqenApplication:
             session_id=engine.session.session_id,
         )
 
+    def tool_catalog(self) -> list[dict]:
+        return self._default_engine().gateway.catalog()
+
+    def tool_audit(self, limit: int = 100) -> list[dict]:
+        return self._default_engine().gateway.audit_entries(limit)
+
+    def tool_policies(self) -> list[dict]:
+        return self._default_engine().gateway.policy_view()
+
     def _default_engine(self) -> ConversationEngine:
         if self._engines:
             return next(iter(self._engines.values()))

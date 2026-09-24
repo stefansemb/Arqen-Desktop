@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Protocol
 
 from arqen.core.engine import ConversationEngine
+from arqen.tools.gateway import ToolPolicy
 
 
 class ApprovalRequired(RuntimeError):
@@ -32,6 +33,9 @@ class ArqenRuntime:
         engine = self.engine_factory()
         if allowed_tools:
             engine.tools._tools = {name: tool for name, tool in engine.tools._tools.items() if name in allowed_tools}
+            # Keep the policy boundary active even for direct/internal tool
+            # requests that bypass the model's reduced schema catalogue.
+            engine.gateway.set_policy("default", ToolPolicy(allowed_tools=frozenset(allowed_tools)))
         if hasattr(engine, "executor"):
             engine.executor.forced_confirmation = set(approval_tools or ())
         if on_approval is not None:

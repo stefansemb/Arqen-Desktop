@@ -44,6 +44,53 @@ Repot ligger på `https://github.com/stefansemb/Arqen-Desktop`, gren `main`.
    skickas varje gång. Vid långa verktygskedjor dominerar det kostnaden.
    Ett urval per tur vore nästa optimering.
 
+## Mission Control – aktuellt läge
+
+Mission Control har nu separata vyer för Dashboard, Tasks, Workflows, Schedules,
+Agents och Activity. Dashboard är systemöversikt medan Mission Control är den
+operativa kön. Tasks, workflows, schedules och agentkort använder en mer
+kortbaserad och lättläst layout. Activity visar senaste händelsen per task och
+task-resultat kan öppnas i ett större Markdown-renderat resultatfönster.
+
+Scheduler- och task-worker körs i desktop-appen. Schedules kan vara dagliga,
+veckovisa, månatliga eller engångskörningar och visas i mänskligt språk.
+One-time-schedules stängs av efter körning. Tasks har timeout/recovery,
+resultatlagring och kan tas bort med bekräftelse; running tasks kan tas bort,
+men tasks som väntar på approval skyddas.
+
+Scout är research-agent och har tillgång till `search_web` och
+`fetch_webpage`. Reddit kan blockera direkthämtning, så framtida webbresearch
+bör ha Reddit JSON/RSS-fallback, retry/backoff, källgränser och tydlig fallback
+till GitHub, Hacker News och officiella release notes.
+
+## Nya prioriterade spår
+
+### 1. Arqen Memory 2.0
+
+Utveckla minnet mot ett lokalt, kontrollerbart retain/recall/reflect-system:
+
+- `retain`: fakta, beslut och erfarenheter med källa och proveniens.
+- `recall`: relevant minne inför nya tasks.
+- `reflect`: sammanfatta lärdomar, återkommande risker och mönster.
+- status och confidence, exempelvis föreslaget, godkänt och föråldrat.
+- Memory-vy för granskning, redigering och borttagning.
+
+Hindsight och agentmemory är inspirationskällor. Börja lokalt och stegvis utan
+att införa en tung extern databas direkt.
+
+### 2. Arqen Tool Gateway
+
+Bygg ett lokalt verktygs- och nyckelproxy-lager:
+
+- registry för alla agentverktyg med risknivå och beskrivning.
+- policy per agent och verktyg.
+- secrets injiceras server-side och exponeras aldrig i prompt eller tool-resultat.
+- auditlogg med user, agent, tool, tid, status och kostnad — aldrig hemligheter.
+- senare UI för verktygskatalog, policies, approvals och användningshistorik.
+
+Börja som en intern modul/tjänst i Arqen. Det bör prioriteras högt eftersom det
+ger säkerhets-, kostnads- och integrationsgrund för framtida agentfunktioner.
+
 ## Medvetna val
 
 - **Fallback är avstängt** i `config/arqen.json` medan modeller utvärderas, så

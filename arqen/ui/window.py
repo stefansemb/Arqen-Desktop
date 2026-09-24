@@ -31,9 +31,11 @@ from PyQt6.QtCore import QEvent, QObject, QSettings, QThread, QTimer, Qt, QUrl, 
 from PyQt6.QtGui import QColor, QBrush, QPainter, QPalette, QPen, QPixmap
 from urllib.request import Request, urlopen
 import json
+import html
 import re
 import threading
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 from arqen.core.engine import ConversationEngine
@@ -53,6 +55,9 @@ from arqen.core.memory_store import MemoryStore
 from arqen.tools.speech import set_audio_level_callback
 from arqen.tools.microphone import MicrophoneRecorder
 from arqen.mission import Agent, MissionRunner, MissionStore, Schedule, Task, Workflow, WorkflowRunner, WorkflowStep
+from arqen.mission.scheduler import MissionScheduler
+from arqen.mission.scheduler_worker import SchedulerWorker
+from arqen.mission.task_worker import TaskWorker
 from uuid import uuid4
 
 
@@ -280,6 +285,12 @@ def strip_emphasis(text: str) -> str:
     return _EMPHASIS.sub(lambda match: match.group("strong") or match.group("em"), text.replace("\\*", "*"))
 
 
+def clean_result_markup(text: str) -> str:
+    """Normalize escaped Markdown/HTML commonly returned by research agents."""
+    cleaned = html.unescape(text or "")
+    return re.sub(r"\\([\\`*_#>\[\]()~+-])", r"\1", cleaned)
+
+
 # Long enough for any reasonable run of bold text, short enough that a stray
 # asterisk cannot stall the stream for the rest of the answer.
 _PENDING_LIMIT = 240
@@ -418,7 +429,7 @@ class ArqenWindow(QMainWindow):
         for label, icon in (("Dashboard", "⌂"), ("Chat", "◌"), ("Mission Control", "◈")):
             self._add_navigation_button(navigation_layout, label, icon)
         navigation_layout.addWidget(QLabel("SYSTEM", objectName="navSection"))
-        for label, icon in (("Agents", "♙"), ("Activity", "≋"), ("Memory", "▤")):
+        for label, icon in (("Agents", "♙"), ("Activity", "≋"), ("Memory", "▤"), ("Tools", "⚿")):
             self._add_navigation_button(navigation_layout, label, icon)
         navigation_layout.addWidget(QLabel("OPERATIONS", objectName="navSection"))
         for label, icon in (("Tasks", "✓"), ("Workflows", "⌘"), ("Schedules", "◷"), ("Content", "◇")):
@@ -550,21 +561,36 @@ class ArqenWindow(QMainWindow):
         self.navigation_stack = QStackedWidget()
         dashboard = QWidget()
         dashboard_layout = QVBoxLayout(dashboard)
+        dashboard_layout.setContentsMargins(18, 18, 18, 18)
+        dashboard_layout.setSpacing(12)
         dashboard_layout.addWidget(QLabel("DASHBOARD", objectName="title"))
-        dashboard_layout.addWidget(QLabel("Mission Control // system overview"))
+        dashboard_layout.addWidget(QLabel("Mission Control // system overview", objectName="status"))
         cards = QGridLayout()
+        cards.setSpacing(10)
         self.dashboard_cards: dict[str, QLabel] = {}
         for index, (key, label) in enumerate((("agents", "AGENTS"), ("tasks", "ACTIVE TASKS"), ("approvals", "APPROVALS"), ("workflows", "WORKFLOW RUNS"))):
             card = QFrame(objectName="panel")
+            card.setMinimumHeight(92)
+            card.setStyleSheet(
+                "QFrame#panel { background: #171d21; border: 1px solid #30383a; border-radius: 8px; }"
+            )
             card_layout = QVBoxLayout(card)
+            card_layout.setContentsMargins(14, 12, 14, 12)
             card_layout.addWidget(QLabel(label))
             value = QLabel("0", objectName="title")
+            value.setStyleSheet("color: #c7ff2f; font-size: 26px; font-weight: 700;")
             card_layout.addWidget(value)
             self.dashboard_cards[key] = value
             cards.addWidget(card, index // 2, index % 2)
         dashboard_layout.addLayout(cards)
-        dashboard_layout.addWidget(QLabel("LATEST ACTIVITY", objectName="title"))
+        dashboard_layout.addWidget(QLabel("LATEST ACTIVITY", objectName="sectionLabel"))
         self.dashboard_activity = QListWidget()
+        self.dashboard_activity.setSpacing(4)
+        self.dashboard_activity.setStyleSheet(
+            "QListWidget { background: #171d21; border: 1px solid #30383a; border-radius: 8px; padding: 6px; }"
+            "QListWidget::item { padding: 7px; border-bottom: 1px solid #252d30; color: #c4cec9; }"
+            "QListWidget::item:last { border-bottom: none; }"
+        )
         dashboard_layout.addWidget(self.dashboard_activity, 1)
         open_chat = QPushButton("OPEN ARQEN CHAT")
         self._style_page_action(open_chat, primary=True)
@@ -572,7 +598,7 @@ class ArqenWindow(QMainWindow):
         dashboard_layout.addWidget(open_chat)
         self.navigation_stack.addWidget(dashboard)
         self.navigation_stack.addWidget(content)
-        for label in ("Tasks", "Workflows", "Schedules", "Agents", "Activity", "Memory", "Content"):
+        for label in ("Tasks", "Workflows", "Schedules", "Agents", "Activity", "Memory", "Tools", "Content"):
             if label == "Tasks":
                 self._add_tasks_view()
                 continue
@@ -590,6 +616,9 @@ class ArqenWindow(QMainWindow):
                 continue
             if label == "Memory":
                 self._add_memory_view()
+                continue
+            if label == "Tools":
+                self._add_tools_view()
                 continue
             if label == "Content":
                 self._add_content_view()
@@ -625,40 +654,92 @@ class ArqenWindow(QMainWindow):
         page_layout = QVBoxLayout(page)
         page_layout.addWidget(QLabel("TASKS", objectName="title"))
         page_layout.addWidget(QLabel("Monitor, run and retry agent work."))
+        self.tasks_attention_only = False
+        task_filters = QHBoxLayout()
+        all_tasks = QPushButton("ALL TASKS")
+        attention_tasks = QPushButton("NEEDS ATTENTION")
+        for button in (all_tasks, attention_tasks):
+            self._style_page_action(button)
+            task_filters.addWidget(button)
+        task_filters.addStretch(1)
+        all_tasks.clicked.connect(lambda: self._set_task_filter(False))
+        attention_tasks.clicked.connect(lambda: self._set_task_filter(True))
+        page_layout.addLayout(task_filters)
         self.mission_tasks = QListWidget()
+        self.mission_tasks.setSpacing(8)
+        self.mission_tasks.setWordWrap(True)
+        self.mission_tasks.setStyleSheet(
+            "QListWidget { background: transparent; border: none; }"
+            "QListWidget::item { background: #171d21; border: 1px solid #30383a; "
+            "border-radius: 8px; padding: 12px; margin: 0 2px; color: #f2f0eb; }"
+            "QListWidget::item:hover { background: #20282a; border-color: #66736e; }"
+            "QListWidget::item:selected { background: #202a20; border: 1px solid #b7ff18; color: #f2f0eb; }"
+        )
         self.mission_tasks.itemClicked.connect(self._show_mission_task)
         page_layout.addWidget(self.mission_tasks, 1)
         self.mission_details = QTextEdit(readOnly=True)
-        self.mission_details.setPlaceholderText("Select a task to view status and events.")
+        self.mission_details.setPlaceholderText("Select a task to view its summary and event history.")
+        self.mission_details.setMinimumHeight(170)
+        self.mission_details.setStyleSheet(
+            "QTextEdit { background: #111516; border: 1px solid #30383a; border-radius: 8px; "
+            "padding: 12px; color: #c4cec9; selection-background-color: #33452a; }"
+        )
         page_layout.addWidget(self.mission_details)
+        self.mission_result_button = QPushButton("OPEN FULL RESULT")
+        self._style_page_action(self.mission_result_button)
+        self.mission_result_button.setEnabled(False)
+        self.mission_result_button.clicked.connect(self._open_selected_task_result)
+        page_layout.addWidget(self.mission_result_button, alignment=Qt.AlignmentFlag.AlignLeft)
         page_layout.addWidget(QLabel("PENDING APPROVALS", objectName="sectionLabel"))
         self.mission_approvals = QListWidget()
         self.mission_approvals.itemClicked.connect(self._show_selected_approval)
         page_layout.addWidget(self.mission_approvals)
         row = QHBoxLayout()
-        for index, (label, handler) in enumerate((("NEW TASK", self._create_mission_task), ("RUN SELECTED TASK", self._run_mission_task), ("RETRY", self._retry_mission_task))):
+        for index, (label, handler) in enumerate((("NEW TASK", self._create_mission_task), ("RUN SELECTED TASK", self._run_mission_task), ("RETRY", self._retry_mission_task), ("DELETE TASK", self._delete_queued_task))):
             button = QPushButton(label)
             self._style_page_action(button, primary=index == 0)
+            button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
             button.clicked.connect(handler)
             row.addWidget(button)
+        row.addStretch(1)
         page_layout.addLayout(row)
         approval_row = QHBoxLayout()
         for index, (label, status) in enumerate((("APPROVE", "approved"), ("REJECT", "rejected"))):
             button = QPushButton(label)
             self._style_page_action(button, primary=index == 0)
+            button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
             button.clicked.connect(lambda _, value=status: self._decide_mission_approval(value))
             approval_row.addWidget(button)
+        approval_row.addStretch(1)
         page_layout.addLayout(approval_row)
         self.navigation_stack.addWidget(page)
 
     def _add_workflows_view(self) -> None:
         page = QWidget()
         page_layout = QVBoxLayout(page)
+        page_layout.setContentsMargins(18, 18, 18, 18)
+        page_layout.setSpacing(10)
         page_layout.addWidget(QLabel("WORKFLOWS", objectName="title"))
-        page_layout.addWidget(QLabel("Build and run multi-agent pipelines."))
+        page_layout.addWidget(QLabel("Build and run multi-agent pipelines.", objectName="status"))
+        page_layout.addWidget(QLabel("AVAILABLE WORKFLOWS", objectName="sectionLabel"))
         self.mission_workflows = QListWidget()
+        self.mission_workflows.setSpacing(8)
+        self.mission_workflows.setStyleSheet(
+            "QListWidget { background: transparent; border: none; }"
+            "QListWidget::item { background: #171d21; border: 1px solid #30383a; "
+            "border-radius: 8px; padding: 11px; margin: 0 2px; color: #f2f0eb; }"
+            "QListWidget::item:hover { background: #20282a; border-color: #66736e; }"
+            "QListWidget::item:selected { background: #202a20; border: 1px solid #b7ff18; }"
+        )
         page_layout.addWidget(self.mission_workflows)
+        page_layout.addWidget(QLabel("RECENT RUNS", objectName="sectionLabel"))
         self.mission_workflow_runs = QListWidget()
+        self.mission_workflow_runs.setSpacing(6)
+        self.mission_workflow_runs.setStyleSheet(
+            "QListWidget { background: #111516; border: 1px solid #30383a; border-radius: 8px; padding: 5px; }"
+            "QListWidget::item { padding: 8px; border-bottom: 1px solid #252d30; color: #c4cec9; }"
+            "QListWidget::item:selected { background: #202a20; color: #f2f0eb; }"
+        )
         self.mission_workflow_runs.itemClicked.connect(self._show_workflow_run)
         page_layout.addWidget(self.mission_workflow_runs)
         self.mission_workflow_details = QTextEdit(readOnly=True)
@@ -688,12 +769,23 @@ class ArqenWindow(QMainWindow):
     def _add_schedules_view(self) -> None:
         page = QWidget()
         page_layout = QVBoxLayout(page)
+        page_layout.setContentsMargins(18, 18, 18, 18)
+        page_layout.setSpacing(10)
         page_layout.addWidget(QLabel("SCHEDULES", objectName="title"))
-        page_layout.addWidget(QLabel("Automate recurring tasks and workflows."))
+        page_layout.addWidget(QLabel("Automate recurring tasks and workflows.", objectName="status"))
         self.mission_schedules = QListWidget()
+        self.mission_schedules.setSpacing(8)
+        self.mission_schedules.setWordWrap(True)
+        self.mission_schedules.setStyleSheet(
+            "QListWidget { background: transparent; border: none; }"
+            "QListWidget::item { background: #171d21; border: 1px solid #30383a; "
+            "border-radius: 8px; padding: 11px; margin: 0 2px; color: #f2f0eb; }"
+            "QListWidget::item:hover { background: #20282a; border-color: #66736e; }"
+            "QListWidget::item:selected { background: #202a20; border: 1px solid #b7ff18; }"
+        )
         page_layout.addWidget(self.mission_schedules, 1)
         row = QHBoxLayout()
-        for index, (label, handler) in enumerate((("NEW SCHEDULE", self._create_mission_schedule), ("ENABLE/DISABLE", self._toggle_mission_schedule))):
+        for index, (label, handler) in enumerate((("NEW SCHEDULE", self._create_mission_schedule), ("ENABLE/DISABLE", self._toggle_mission_schedule), ("DELETE SCHEDULE", self._delete_mission_schedule))):
             button = QPushButton(label)
             self._style_page_action(button, primary=index == 0)
             button.clicked.connect(handler)
@@ -704,8 +796,10 @@ class ArqenWindow(QMainWindow):
     def _add_agents_view(self) -> None:
         page = QWidget()
         page_layout = QVBoxLayout(page)
+        page_layout.setContentsMargins(18, 18, 18, 18)
+        page_layout.setSpacing(10)
         page_layout.addWidget(QLabel("AGENTS", objectName="title"))
-        page_layout.addWidget(QLabel("Manage runtimes, tools and approval policies."))
+        page_layout.addWidget(QLabel("Manage runtimes, tools and approval policies.", objectName="status"))
         self.nexus_card_host = QWidget()
         self.nexus_card_layout = QHBoxLayout(self.nexus_card_host)
         self.nexus_card_layout.setContentsMargins(0, 0, 0, 0)
@@ -719,6 +813,10 @@ class ArqenWindow(QMainWindow):
             group_list.setMovement(QListWidget.Movement.Static)
             group_list.setSpacing(10)
             group_list.setWordWrap(True)
+            group_list.setStyleSheet(
+                "QListWidget { background: transparent; border: none; }"
+                "QListWidget::item { background: transparent; border: none; padding: 0; }"
+            )
             group_list.itemClicked.connect(lambda _, source=group_list: setattr(self, "mission_agents", source))
             self.agent_group_lists[group] = group_list
             page_layout.addWidget(group_list, 1)
@@ -748,9 +846,18 @@ class ArqenWindow(QMainWindow):
     def _add_activity_view(self) -> None:
         page = QWidget()
         page_layout = QVBoxLayout(page)
+        page_layout.setContentsMargins(18, 18, 18, 18)
+        page_layout.setSpacing(10)
         page_layout.addWidget(QLabel("ACTIVITY", objectName="title"))
-        page_layout.addWidget(QLabel("Live system events and agent activity."))
+        page_layout.addWidget(QLabel("Live system events and agent activity.", objectName="status"))
         self.activity_view_list = QListWidget()
+        self.activity_view_list.setSpacing(3)
+        self.activity_view_list.setStyleSheet(
+            "QListWidget { background: #111516; border: 1px solid #30383a; border-radius: 8px; padding: 6px; }"
+            "QListWidget::item { padding: 9px 8px; border-bottom: 1px solid #252d30; color: #c4cec9; }"
+            "QListWidget::item:hover { background: #20282a; }"
+            "QListWidget::item:selected { background: #202a20; border-left: 2px solid #b7ff18; }"
+        )
         self.activity_view_list.itemClicked.connect(self._open_activity_task)
         page_layout.addWidget(self.activity_view_list, 1)
         self.activity_view_timer = QTimer(self)
@@ -770,20 +877,79 @@ class ArqenWindow(QMainWindow):
         page_layout.addWidget(QLabel("MEMORY", objectName="title"))
         page_layout.addWidget(QLabel("User-approved long-term context."))
         self.memory_view_list = QListWidget()
+        self.memory_view_list.itemDoubleClicked.connect(self._edit_memory_item)
         page_layout.addWidget(self.memory_view_list, 1)
+        actions = QHBoxLayout()
         refresh = QPushButton("REFRESH MEMORY")
-        self._style_page_action(refresh)
+        edit = QPushButton("EDIT")
+        delete = QPushButton("DELETE")
+        for button in (refresh, edit, delete):
+            self._style_page_action(button)
+            actions.addWidget(button)
         refresh.clicked.connect(self._refresh_memory_view)
-        page_layout.addWidget(refresh)
+        edit.clicked.connect(self._edit_memory_item)
+        delete.clicked.connect(self._delete_memory_item)
+        page_layout.addLayout(actions)
         self._refresh_memory_view()
         self.navigation_stack.addWidget(page)
+
+    def _add_tools_view(self) -> None:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.addWidget(QLabel("TOOL GATEWAY", objectName="title"))
+        layout.addWidget(QLabel("Catalog, policies and recent audit activity."))
+        self.tools_view_list = QListWidget()
+        layout.addWidget(self.tools_view_list, 1)
+        refresh = QPushButton("REFRESH TOOL GATEWAY")
+        self._style_page_action(refresh)
+        refresh.clicked.connect(self._refresh_tools_view)
+        layout.addWidget(refresh)
+        self._refresh_tools_view()
+        self.navigation_stack.addWidget(page)
+
+    def _refresh_tools_view(self) -> None:
+        if not hasattr(self, "tools_view_list"):
+            return
+        self.tools_view_list.clear()
+        for item in self.engine.gateway.catalog():
+            self.tools_view_list.addItem(f"[{item['risk']}] {item['name']} — {item['description']}")
+        for policy in self.engine.gateway.policy_view():
+            self.tools_view_list.addItem(f"POLICY {policy['agent']}: {policy['allowed_tools'] or 'all'}")
+        for entry in self.engine.gateway.audit_entries(10):
+            self.tools_view_list.addItem(f"AUDIT {entry['status']}: {entry['tool']} ({entry['time']})")
 
     def _refresh_memory_view(self) -> None:
         if not hasattr(self, "memory_view_list"):
             return
         self.memory_view_list.clear()
-        for item in MemoryStore().list():
-            self.memory_view_list.addItem(str(item))
+        for record in MemoryStore().records():
+            item = QListWidgetItem(
+                f"[{record.status} · {record.confidence:.2f}] {record.content}"
+            )
+            item.setData(Qt.ItemDataRole.UserRole, record.content)
+            self.memory_view_list.addItem(item)
+
+    def _selected_memory(self):
+        item = self.memory_view_list.currentItem()
+        return item.data(Qt.ItemDataRole.UserRole) if item else None
+
+    def _edit_memory_item(self, item=None) -> None:
+        old_fact = item.data(Qt.ItemDataRole.UserRole) if item else self._selected_memory()
+        if not old_fact:
+            return
+        new_fact, accepted = QInputDialog.getMultiLineText(self, "Edit memory", "Memory:", old_fact)
+        if accepted and new_fact.strip():
+            MemoryStore().update(old_fact, new_fact)
+            self._refresh_memory_view()
+
+    def _delete_memory_item(self) -> None:
+        fact = self._selected_memory()
+        if not fact:
+            return
+        answer = QMessageBox.question(self, "Delete memory", "Delete this memory?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if answer == QMessageBox.StandardButton.Yes:
+            MemoryStore().forget(fact)
+            self._refresh_memory_view()
 
     def _add_content_view(self) -> None:
         page = QWidget()
@@ -828,11 +994,13 @@ class ArqenWindow(QMainWindow):
                 "QPushButton { background: transparent; color: #8d969d; border: none; "
                 "text-align: left; padding: 7px 8px; border-radius: 5px; }"
             )
-        pages = {"Dashboard": 0, "Chat": 1, "Tasks": 2, "Workflows": 3, "Schedules": 4, "Agents": 5, "Activity": 6, "Memory": 7, "Content": 8, "Mission Control": getattr(self, "mission_page_index", 0)}
+        pages = {"Dashboard": 0, "Chat": 1, "Tasks": 2, "Workflows": 3, "Schedules": 4, "Agents": 5, "Activity": 6, "Memory": 7, "Tools": 8, "Content": 9, "Mission Control": getattr(self, "mission_page_index", 0)}
         if name in pages and hasattr(self, "navigation_stack"):
             self.navigation_stack.setCurrentIndex(pages[name])
             if name == "Memory":
                 self._refresh_memory_view()
+            elif name == "Tools":
+                self._refresh_tools_view()
             elif name == "Content":
                 self._refresh_content_view()
 
@@ -841,6 +1009,10 @@ class ArqenWindow(QMainWindow):
         self.mission_store = MissionStore(data_dir() / "mission.sqlite3")
         self.mission_runner = MissionRunner(self.mission_store, lambda: self.engine)
         self.workflow_runner = WorkflowRunner(self.mission_store, self.mission_runner)
+        self.scheduler_worker = SchedulerWorker(MissionScheduler(self.mission_store, self.workflow_runner))
+        self.scheduler_worker.start()
+        self.task_worker = TaskWorker(self.mission_store, self.mission_runner)
+        self.task_worker.start()
         dock = QDockWidget("MISSION CONTROL", self)
         dock.setObjectName("missionControlDock")
         panel = QWidget()
@@ -869,6 +1041,8 @@ class ArqenWindow(QMainWindow):
         self.mission_activity_timer.setInterval(2000)
         self.mission_activity_timer.timeout.connect(self.refresh_mission_activity)
         self.mission_activity_timer.timeout.connect(self.refresh_dashboard)
+        self.mission_activity_timer.timeout.connect(self.refresh_mission_tasks)
+        self.mission_activity_timer.timeout.connect(self.refresh_mission_approvals)
         self.mission_activity_timer.start()
         panel_layout.addWidget(QLabel("SCHEDULES"))
         legacy_schedules = QListWidget()
@@ -929,29 +1103,59 @@ class ArqenWindow(QMainWindow):
         dock.setWidget(None)
         overview = QWidget()
         overview_layout = QVBoxLayout(overview)
+        overview_layout.setContentsMargins(18, 18, 18, 18)
+        overview_layout.setSpacing(12)
         overview_layout.addWidget(QLabel("MISSION CONTROL", objectName="title"))
-        overview_layout.addWidget(QLabel("Orchestrator overview // monitor the system at a glance."))
+        overview_layout.addWidget(QLabel("Operational queue // decide what should happen next.", objectName="status"))
         overview_cards = QGridLayout()
+        overview_cards.setSpacing(10)
         self.mission_overview_cards: dict[str, QLabel] = {}
-        for index, (key, label) in enumerate((("agents", "AGENTS ONLINE"), ("tasks", "ACTIVE TASKS"), ("approvals", "PENDING APPROVALS"), ("workflows", "WORKFLOW RUNS"))):
+        for index, (key, label, target) in enumerate((
+            ("queue", "TASK QUEUE", "Tasks"),
+            ("approvals", "WAITING APPROVAL", "Pending Approvals"),
+            ("workflows", "ACTIVE WORKFLOWS", "Workflows"),
+            ("attention", "NEEDS ATTENTION", "Attention Tasks"),
+        )):
             card = QFrame(objectName="panel")
+            card.setCursor(Qt.CursorShape.PointingHandCursor)
+            card.mousePressEvent = lambda event, name=target: (
+                self._open_attention_tasks() if name == "Attention Tasks" else
+                self._open_pending_approvals() if name == "Pending Approvals" else
+                self._select_navigation(name)
+            )
+            card.setMinimumHeight(92)
+            card.setStyleSheet(
+                "QFrame#panel { background: #111516; border: 1px solid #3b4748; border-radius: 8px; }"
+                "QFrame#panel:hover { background: #171d21; border: 1px solid #b7ff18; }"
+            )
             card_layout = QVBoxLayout(card)
+            card_layout.setContentsMargins(14, 12, 14, 12)
             card_layout.addWidget(QLabel(label))
             value = QLabel("0", objectName="title")
+            value.setStyleSheet("color: #d8ff75; font-size: 26px; font-weight: 700;")
             card_layout.addWidget(value)
             self.mission_overview_cards[key] = value
             overview_cards.addWidget(card, index // 2, index % 2)
         overview_layout.addLayout(overview_cards)
         overview_layout.addWidget(QLabel("LATEST ACTIVITY", objectName="sectionLabel"))
         self.mission_overview_activity = QListWidget()
-        overview_layout.addWidget(self.mission_overview_activity, 1)
+        self.mission_overview_activity.setSpacing(4)
+        self.mission_overview_activity.setStyleSheet(
+            "QListWidget { background: #111516; border: 1px solid #30383a; border-radius: 8px; padding: 6px; }"
+            "QListWidget::item { padding: 8px; border-bottom: 1px solid #252d30; color: #c4cec9; }"
+        )
+        self.mission_overview_activity.setMaximumHeight(300)
+        overview_layout.addWidget(self.mission_overview_activity)
         overview_actions = QHBoxLayout()
         for label, target in (("OPEN TASKS", "Tasks"), ("OPEN WORKFLOWS", "Workflows"), ("OPEN ACTIVITY", "Activity")):
             button = QPushButton(label)
+            button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
             self._style_page_action(button, primary=target == "Tasks")
             button.clicked.connect(lambda _, name=target: self._select_navigation(name))
             overview_actions.addWidget(button)
+        overview_actions.addStretch(1)
         overview_layout.addLayout(overview_actions)
+        overview_layout.addStretch(1)
         self.mission_page_index = self.navigation_stack.addWidget(overview)
         dock.hide()
         self.refresh_mission_tasks()
@@ -972,8 +1176,13 @@ class ArqenWindow(QMainWindow):
         self.dashboard_cards["approvals"].setText(str(len(self.mission_store.list_approvals("pending"))))
         self.dashboard_cards["workflows"].setText(str(len(self.mission_store.list_workflow_runs())))
         if hasattr(self, "mission_overview_cards"):
-            for key, value in self.dashboard_cards.items():
-                self.mission_overview_cards[key].setText(value.text())
+            tasks = self.mission_store.list_tasks()
+            active_workflows = sum(1 for run in self.mission_store.list_workflow_runs() if run.status in {"queued", "running", "waiting_approval"})
+            attention = sum(1 for task in tasks if task.status in {"failed", "cancelled"})
+            self.mission_overview_cards["queue"].setText(str(sum(1 for task in tasks if task.status in {"queued", "running"})))
+            self.mission_overview_cards["approvals"].setText(str(len(self.mission_store.list_approvals("pending"))))
+            self.mission_overview_cards["workflows"].setText(str(active_workflows))
+            self.mission_overview_cards["attention"].setText(str(attention))
         self.dashboard_activity.clear()
         if hasattr(self, "mission_overview_activity"):
             self.mission_overview_activity.clear()
@@ -982,13 +1191,25 @@ class ArqenWindow(QMainWindow):
             self.dashboard_activity.addItem(text)
             if hasattr(self, "mission_overview_activity"):
                 self.mission_overview_activity.addItem(text)
+        if hasattr(self, "mission_overview_activity") and not self.mission_overview_activity.count():
+            self.mission_overview_activity.addItem("No recent activity")
 
     def refresh_mission_activity(self) -> None:
         target = getattr(self, "activity_view_list", self.mission_activity)
         target.clear()
-        for event in self.mission_store.list_all_events(50):
-            item = QListWidgetItem(f"{event.created_at} [{event.kind}] {event.message}")
+        latest_by_task = {}
+        for event in self.mission_store.list_all_events(80):
+            # Activity is an overview, not the full event log. Keep the most
+            # recent event for each task; the task detail view still exposes
+            # the complete history.
+            latest_by_task.setdefault(event.task_id, event)
+        for event in latest_by_task.values():
+            kind = event.kind.upper().replace("_", " ")
+            task = self.mission_store.get_task(event.task_id)
+            task_label = task.title if task is not None else f"task {event.task_id[:8]}"
+            item = QListWidgetItem(f"{kind}  ·  {task_label}\n{event.message}  ·  {event.created_at}")
             item.setData(Qt.ItemDataRole.UserRole, event.task_id)
+            item.setSizeHint(QSize(0, 46))
             if event.kind in {"failed", "approval_rejected"}:
                 item.setForeground(QColor("#ff6b6b"))
             elif event.kind in {"waiting_approval", "approval_requested"}:
@@ -1021,8 +1242,9 @@ class ArqenWindow(QMainWindow):
     def refresh_mission_workflows(self) -> None:
         self.mission_workflows.clear()
         for workflow in self.mission_store.list_workflows():
-            item = QListWidgetItem(f"[{len(workflow.steps)} steps] {workflow.name}")
+            item = QListWidgetItem(f"{workflow.name}\n{len(workflow.steps)} steps  ·  multi-agent pipeline")
             item.setData(Qt.ItemDataRole.UserRole, workflow.id)
+            item.setSizeHint(QSize(0, 58))
             item.setToolTip("\n".join(f"{step.name} → {step.agent_id or 'Arqen'}" for step in workflow.steps))
             self.mission_workflows.addItem(item)
 
@@ -1032,8 +1254,10 @@ class ArqenWindow(QMainWindow):
             selected_id = self.mission_workflow_runs.currentItem().data(Qt.ItemDataRole.UserRole)
         self.mission_workflow_runs.clear()
         for run in self.mission_store.list_workflow_runs():
-            item = QListWidgetItem(f"[{run.status.upper()}] {run.workflow_id} // step {run.current_step} // {run.id[:8]}")
+            status = run.status.upper().replace("_", " ")
+            item = QListWidgetItem(f"{status}  ·  step {run.current_step}\n{run.workflow_id}  ·  {run.id[:8]}")
             item.setData(Qt.ItemDataRole.UserRole, run.id)
+            item.setSizeHint(QSize(0, 52))
             item.setToolTip("\n".join(run.results) or "No results yet")
             self.mission_workflow_runs.addItem(item)
             if run.id == selected_id:
@@ -1107,59 +1331,124 @@ class ArqenWindow(QMainWindow):
     def refresh_mission_schedules(self) -> None:
         self.mission_schedules.clear()
         for schedule in self.mission_store.list_schedules():
-            mode = schedule.cron or f"once: {schedule.run_at}"
+            mode = self._schedule_display(schedule)
             state = "ON" if schedule.enabled else "OFF"
             agent = self.mission_store.get_agent(schedule.agent_id) if schedule.agent_id else None
             workflow = next((item for item in self.mission_store.list_workflows() if item.id == schedule.workflow_id), None) if schedule.workflow_id else None
             count = sum(1 for task in self.mission_store.list_tasks() if task.schedule_id == schedule.id)
             last = schedule.last_run_at or "aldrig"
             target = f"workflow: {workflow.name}" if workflow else f"task: {agent.name if agent else 'Arqen'}"
-            item = QListWidgetItem(f"[{state}] {schedule.name} // {mode} // {target} // tasks: {count}")
+            item = QListWidgetItem(f"{schedule.name}\n{state}  ·  {mode}\n{target}  ·  {count} tasks  ·  last: {last}")
             item.setData(Qt.ItemDataRole.UserRole, schedule.id)
+            item.setSizeHint(QSize(0, 72))
             item.setToolTip(f"Last run: {last}")
+            item.setForeground(QColor("#b7ff18" if schedule.enabled else "#657078"))
             self.mission_schedules.addItem(item)
 
+    @staticmethod
+    def _schedule_display(schedule: Schedule) -> str:
+        if not schedule.cron:
+            return f"One time: {schedule.run_at or 'not set'}"
+        parts = schedule.cron.split()
+        if len(parts) != 5:
+            return f"Advanced: {schedule.cron}"
+        minute, hour, day, month, weekday = parts
+        try:
+            time_label = f"{int(hour):02d}:{int(minute):02d}"
+        except ValueError:
+            return f"Advanced: {schedule.cron}"
+        if day == "*" and month == "*" and weekday == "*":
+            return f"Every day at {time_label}"
+        if day == "*" and month == "*" and weekday != "*":
+            names = {"0": "Sunday", "1": "Monday", "2": "Tuesday", "3": "Wednesday", "4": "Thursday", "5": "Friday", "6": "Saturday", "7": "Sunday"}
+            return f"Every {names.get(weekday, weekday)} at {time_label}"
+        if day != "*" and month == "*" and weekday == "*":
+            return f"Monthly on day {day} at {time_label}"
+        return f"Advanced: {schedule.cron}"
+
     def _create_mission_schedule(self) -> None:
-        name, accepted = QInputDialog.getText(self, "New schedule", "Name:")
-        if not accepted or not name.strip():
-            return
-        prompt, accepted = QInputDialog.getMultiLineText(self, "New schedule", "Task instruction:")
-        if not accepted or not prompt.strip():
-            return
-        mode, accepted = QInputDialog.getItem(self, "New schedule", "Type:", ["Cron", "One-time"], 0, False)
-        if not accepted:
-            return
-        if mode == "Cron":
-            cron, accepted = QInputDialog.getText(self, "New schedule", "Cron (e.g. 0 8 * * *):")
-            if not accepted or not cron.strip():
-                return
-            schedule = Schedule(uuid4().hex, name.strip(), prompt.strip(), cron=cron.strip())
-        else:
-            run_at, accepted = QInputDialog.getText(self, "New schedule", "Time (ISO-8601 UTC):")
-            if not accepted or not run_at.strip():
-                return
-            schedule = Schedule(uuid4().hex, name.strip(), prompt.strip(), run_at=run_at.strip())
-        workflow_id = None
+        dialog = QDialog(self)
+        dialog.setWindowTitle("New schedule")
+        dialog_layout = QVBoxLayout(dialog)
+        form = QFormLayout()
+        name = QLineEdit()
+        name.setPlaceholderText("e.g. Morning research")
+        form.addRow("Name", name)
+        prompt = QTextEdit()
+        prompt.setPlaceholderText("Describe what should happen when this schedule runs.")
+        prompt.setMinimumHeight(90)
+        form.addRow("Instruction", prompt)
+        run = QComboBox()
+        run.addItem("A regular task", None)
         workflows = self.mission_store.list_workflows()
-        if workflows:
-            choices = ["Vanlig task"] + [f"Workflow: {workflow.name}" for workflow in workflows]
-            selected, accepted = QInputDialog.getItem(self, "New schedule", "Run:", choices, 0, False)
-            if not accepted:
+        for workflow in workflows:
+            run.addItem(f"Workflow: {workflow.name}", workflow.id)
+        form.addRow("Run", run)
+        agents = [agent for agent in self.mission_store.list_agents() if agent.enabled]
+        agent_box = QComboBox()
+        agent_box.addItem("Arqen default", None)
+        for agent in agents:
+            agent_box.addItem(f"{agent.name} — {agent.role}", agent.id)
+        form.addRow("Agent", agent_box)
+        frequency = QComboBox()
+        frequency.addItems(["Every day", "Every week", "Every month", "One time", "Advanced (cron)"])
+        form.addRow("When", frequency)
+        weekday = QComboBox()
+        weekday.addItems(["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"])
+        form.addRow("Weekday", weekday)
+        timing = QLineEdit("08:00")
+        timing.setPlaceholderText("HH:MM")
+        form.addRow("Time", timing)
+        help_label = QLabel("Choose a simple schedule. Advanced cron is optional.")
+        help_label.setWordWrap(True)
+        help_label.setStyleSheet("color: #8d969d; font-size: 11px;")
+        dialog_layout.addLayout(form)
+        dialog_layout.addWidget(help_label)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel | QDialogButtonBox.StandardButton.Ok)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        dialog_layout.addWidget(buttons)
+        def update_schedule_fields(value: str) -> None:
+            timing.setPlaceholderText("ISO-8601 UTC" if value == "One time" else "HH:MM")
+            weekday.setEnabled(value == "Every week")
+            weekday.setToolTip("Used only for weekly schedules.")
+
+        frequency.currentTextChanged.connect(update_schedule_fields)
+        update_schedule_fields(frequency.currentText())
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        if not name.text().strip() or not prompt.toPlainText().strip():
+            QMessageBox.warning(self, "New schedule", "Fill in both a name and an instruction.")
+            return
+        mode = frequency.currentText()
+        value = timing.text().strip()
+        if mode == "One time":
+            if re.fullmatch(r"\d{1,2}:\d{2}", value):
+                hour, minute = (int(part) for part in value.split(":"))
+                local_now = datetime.now().astimezone()
+                local_target = local_now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+                value = local_target.astimezone(timezone.utc).isoformat()
+            else:
+                try:
+                    datetime.fromisoformat(value)
+                except ValueError:
+                    QMessageBox.warning(self, "New schedule", "Use HH:MM or an ISO-8601 date and time.")
+                    return
+            schedule = Schedule(uuid4().hex, name.text().strip(), prompt.toPlainText().strip(), run_at=value)
+        elif mode == "Advanced (cron)":
+            schedule = Schedule(uuid4().hex, name.text().strip(), prompt.toPlainText().strip(), cron=value)
+        else:
+            if not re.fullmatch(r"\d{1,2}:\d{2}", value):
+                QMessageBox.warning(self, "New schedule", "Time must use HH:MM, for example 08:00.")
                 return
-            if selected != choices[0]:
-                workflow_id = workflows[choices.index(selected) - 1].id
-        agents = self.mission_store.list_agents()
-        agent_id = None
-        if agents:
-            labels = ["Arqen default"] + [f"{agent.name} — {agent.role}" for agent in agents if agent.enabled]
-            selected, accepted = QInputDialog.getItem(self, "New schedule", "Agent:", labels, 0, False)
-            if not accepted:
-                return
-            if selected != labels[0]:
-                agent_id = next(agent.id for agent in agents if f"{agent.name} — {agent.role}" == selected)
-            schedule = Schedule(schedule.id, schedule.name, schedule.prompt, agent_id, schedule.cron, schedule.run_at, True, schedule.created_at, None, workflow_id)
-        elif workflow_id:
-            schedule = Schedule(schedule.id, schedule.name, schedule.prompt, None, schedule.cron, schedule.run_at, True, schedule.created_at, None, workflow_id)
+            hour, minute = value.split(":")
+            cron = f"{int(minute)} {int(hour)} * * *"
+            if mode == "Every week":
+                cron = f"{int(minute)} {int(hour)} * * {weekday.currentIndex() + 1 if weekday.currentIndex() < 6 else 0}"
+            elif mode == "Every month":
+                cron = f"{int(minute)} {int(hour)} 1 * *"
+            schedule = Schedule(uuid4().hex, name.text().strip(), prompt.toPlainText().strip(), cron=cron)
+        schedule = Schedule(schedule.id, schedule.name, schedule.prompt, agent_box.currentData(), schedule.cron, schedule.run_at, True, schedule.created_at, None, run.currentData())
         self.mission_store.save_schedule(schedule)
         self.refresh_mission_schedules()
 
@@ -1172,6 +1461,25 @@ class ArqenWindow(QMainWindow):
         if schedule is not None:
             self.mission_store.set_schedule_enabled(schedule.id, not schedule.enabled)
             self.refresh_mission_schedules()
+
+    def _delete_mission_schedule(self) -> None:
+        item = self.mission_schedules.currentItem()
+        if item is None:
+            return
+        schedule_id = item.data(Qt.ItemDataRole.UserRole)
+        schedule = next((entry for entry in self.mission_store.list_schedules() if entry.id == schedule_id), None)
+        if schedule is None:
+            return
+        answer = QMessageBox.question(
+            self,
+            "Delete schedule",
+            f"Delete '{schedule.name}'? Existing tasks will be kept.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self.mission_store.delete_schedule(schedule.id)
+        self.refresh_mission_schedules()
 
     def refresh_mission_agents(self) -> None:
         for group_list in self.agent_group_lists.values():
@@ -1187,18 +1495,31 @@ class ArqenWindow(QMainWindow):
             tools = ", ".join(agent.allowed_tools) or "no tools"
             approvals = ", ".join(agent.approval_tools) or "none"
             card = QFrame(objectName="panel")
-            card.setMinimumSize(250, 132)
+            card.setMinimumSize(250, 154)
             card.setMaximumWidth(320)
+            card.setStyleSheet(
+                "QFrame#panel { background: #171d21; border: 1px solid #30383a; border-radius: 8px; }"
+            )
             card_layout = QVBoxLayout(card)
+            card_layout.setContentsMargins(14, 12, 14, 12)
+            card_layout.setSpacing(5)
             heading = QHBoxLayout()
             indicator = QLabel("●")
-            indicator.setStyleSheet("color: #b7ff18; font-size: 14px;")
+            indicator_color = "#b7ff18" if agent.enabled else "#657078"
+            indicator.setStyleSheet(f"color: {indicator_color}; font-size: 14px;")
             heading.addWidget(indicator)
             heading.addWidget(QLabel(agent.name, objectName="title"))
             heading.addStretch(1)
             card_layout.addLayout(heading)
-            card_layout.addWidget(QLabel(agent.role))
-            card_layout.addWidget(QLabel(f"{agent.runtime} runtime · {len(agent.allowed_tools)} tools"))
+            role_label = QLabel(agent.role)
+            role_label.setStyleSheet("color: #dbe2df; font-weight: 600;")
+            card_layout.addWidget(role_label)
+            runtime_label = QLabel(f"{agent.runtime} runtime  ·  {len(agent.allowed_tools)} tools")
+            runtime_label.setStyleSheet("color: #8d969d; font-size: 11px;")
+            card_layout.addWidget(runtime_label)
+            state_label = QLabel("ENABLED" if agent.enabled else "DISABLED")
+            state_label.setStyleSheet(f"color: {indicator_color}; font-size: 10px; letter-spacing: 1px;")
+            card_layout.addWidget(state_label)
             chat = QPushButton("CHAT")
             self._style_page_action(chat)
             chat.clicked.connect(lambda _, name=agent.name: self._open_agent_chat(name))
@@ -1322,13 +1643,49 @@ class ArqenWindow(QMainWindow):
     def refresh_mission_tasks(self) -> None:
         if not hasattr(self, "mission_tasks"):
             return
+        selected_id = None
+        if self.mission_tasks.currentItem() is not None:
+            selected_id = self.mission_tasks.currentItem().data(Qt.ItemDataRole.UserRole)
         self.mission_tasks.clear()
-        for task in self.mission_store.list_tasks():
+        tasks = self.mission_store.list_tasks()
+        if getattr(self, "tasks_attention_only", False):
+            tasks = [task for task in tasks if task.status in {"failed", "cancelled"}]
+        for task in tasks:
             agent = self.mission_store.get_agent(task.agent_id) if task.agent_id else None
-            owner = f" // {agent.name}" if agent else ""
-            item = QListWidgetItem(f"[{task.status.upper()}] {task.title}{owner}")
+            agent_label = agent.name if agent else "Arqen default"
+            status = task.status.upper().replace("_", " ")
+            item = QListWidgetItem(f"{task.title}\n{status}  ·  {agent_label}")
             item.setData(Qt.ItemDataRole.UserRole, task.id)
+            item.setSizeHint(QSize(0, 64))
+            item.setToolTip(task.prompt)
+            if task.status in {"failed", "cancelled"}:
+                item.setForeground(QColor("#ff6b6b"))
+            elif task.status in {"waiting_approval", "queued"}:
+                item.setForeground(QColor("#ffd166"))
+            elif task.status == "completed":
+                item.setForeground(QColor("#b7ff18"))
             self.mission_tasks.addItem(item)
+            if task.id == selected_id:
+                self.mission_tasks.setCurrentItem(item)
+        if selected_id:
+            self._show_mission_task()
+
+    def _set_task_filter(self, attention_only: bool) -> None:
+        self.tasks_attention_only = attention_only
+        self.refresh_mission_tasks()
+
+    def _open_attention_tasks(self) -> None:
+        self.tasks_attention_only = True
+        self._select_navigation("Tasks")
+        self.refresh_mission_tasks()
+
+    def _open_pending_approvals(self) -> None:
+        self._select_navigation("Mission Control")
+        if hasattr(self, "mission_approvals") and self.mission_approvals.count():
+            item = self.mission_approvals.item(0)
+            self.mission_approvals.setCurrentItem(item)
+            self.mission_approvals.scrollToItem(item)
+            self._show_selected_approval(item)
 
     def refresh_mission_approvals(self) -> None:
         self.mission_approvals.clear()
@@ -1362,13 +1719,48 @@ class ArqenWindow(QMainWindow):
         task = self._selected_mission_task()
         if task is None:
             return
+        self.mission_result_button.setEnabled(bool(task.result))
         events = self.mission_store.list_events(task.id)
         agent = self.mission_store.get_agent(task.agent_id) if task.agent_id else None
         agent_label = agent.name if agent else "Arqen default"
         source = task.schedule_id or "manuell"
-        lines = [f"{task.title}\nStatus: {task.status}\nAgent: {agent_label}\nSource: {source}\nAttempts: {task.attempts}/{task.max_attempts}\nError: {task.error or 'none'}\n\n{task.prompt}", "", "Events:"]
+        status = task.status.upper().replace("_", " ")
+        lines = [
+            task.title,
+            "",
+            f"STATUS     {status}",
+            f"AGENT      {agent_label}",
+            f"SOURCE     {source}",
+            f"ATTEMPTS   {task.attempts}/{task.max_attempts}",
+            f"ERROR      {task.error or 'none'}",
+            "",
+            "INSTRUCTION",
+            task.prompt,
+            "",
+            "RESULT",
+            clean_result_markup(task.result) if task.result else ("No result stored." if task.status == "completed" else "Not available yet."),
+            "",
+            "EVENT HISTORY",
+        ]
         lines.extend(f"{event.created_at}  {event.kind}: {event.message}" for event in events)
         self.mission_details.setPlainText("\n".join(lines))
+
+    def _open_selected_task_result(self) -> None:
+        task = self._selected_mission_task()
+        if task is None or not task.result:
+            return
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f"Result — {task.title}")
+        dialog.resize(900, 650)
+        layout = QVBoxLayout(dialog)
+        result = QTextEdit(readOnly=True)
+        result.setMarkdown(clean_result_markup(task.result))
+        layout.addWidget(result)
+        close = QPushButton("CLOSE")
+        self._style_page_action(close, primary=True)
+        close.clicked.connect(dialog.accept)
+        layout.addWidget(close, alignment=Qt.AlignmentFlag.AlignLeft)
+        dialog.exec()
 
     def _create_mission_task(self) -> None:
         title, accepted = QInputDialog.getText(self, "New Mission Control task", "Title:")
@@ -1412,6 +1804,24 @@ class ArqenWindow(QMainWindow):
         self.mission_tasks.setEnabled(False)
         self.mission_details.setPlainText(f"{task.title}\nStatus: RUNNING\n\nArqen is working...")
         self.mission_thread.start()
+
+    def _delete_queued_task(self) -> None:
+        task = self._selected_mission_task()
+        if task is None or task.status == "waiting_approval":
+            QMessageBox.information(self, "Delete task", "Tasks waiting for approval cannot be deleted.")
+            return
+        warning = "The active model call may take a short moment to stop." if task.status == "running" else "This removes it from Mission Control."
+        answer = QMessageBox.question(
+            self,
+            "Delete task",
+            f"Delete '{task.title}'?\n\n{warning}",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self.mission_store.delete_task(task.id)
+        self.refresh_mission_tasks()
+        self.refresh_dashboard()
 
     def _retry_mission_task(self) -> None:
         task = self._selected_mission_task()
@@ -1547,6 +1957,10 @@ class ArqenWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:
         self._store_placement("main_window", self)
+        if hasattr(self, "scheduler_worker"):
+            self.scheduler_worker.stop()
+        if hasattr(self, "task_worker"):
+            self.task_worker.stop()
         for attribute, key in self._DOCK_GEOMETRY_KEYS.items():
             dock = getattr(self, attribute, None)
             if dock is not None and dock.isFloating():

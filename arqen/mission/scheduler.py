@@ -25,6 +25,10 @@ class MissionScheduler:
                 task = Task(uuid4().hex, schedule.name, schedule.prompt, agent_id=schedule.agent_id, schedule_id=schedule.id)
                 self.store.save_task(task)
             self.store.mark_schedule_run(schedule.id, current.isoformat())
+            if schedule.run_at:
+                # One-time schedules must never create a task again on the
+                # next 30-second poll after their due time has passed.
+                self.store.set_schedule_enabled(schedule.id, False)
             if task:
                 created.append(task)
         return created

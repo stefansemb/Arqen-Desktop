@@ -32,6 +32,7 @@ class Task:
     created_at: str = field(default_factory=now)
     updated_at: str = field(default_factory=now)
     error: str | None = None
+    result: str | None = None
     claimed_at: str | None = None
     attempts: int = 0
     max_attempts: int = 3

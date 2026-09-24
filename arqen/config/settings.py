@@ -51,7 +51,7 @@ def load_provider_config(path: Path | None = None) -> ProviderConfig:
         api_key=api_key,
         fallback_enabled=bool(data.get("fallback", {}).get("enabled", False)),
         fallback_provider=str(data.get("fallback", {}).get("provider", "")),
-        fallback_timeout=float(data.get("fallback", {}).get("timeout", 10.0)),
+        fallback_timeout=float(data.get("fallback", {}).get("timeout", 90.0)),
         profile_name=str(data.get("profile", "")),
     )
 

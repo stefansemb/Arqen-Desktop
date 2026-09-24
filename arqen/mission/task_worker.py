@@ -27,14 +27,27 @@ class TaskWorker:
 
     def _run(self) -> None:
         while not self._stop.is_set():
-            self.store.recover_stale_tasks(3600)
+            # A provider call should not keep a task active indefinitely.
+            # Fifteen minutes leaves room for real research while recovering
+            # hung desktop/model sessions promptly.
+            self.store.recover_stale_tasks(900)
             for task in self.store.list_tasks("queued"):
                 if self._stop.is_set():
                     break
-                try:
-                    self.runner.run(task.id)
-                except Exception:
-                    # MissionRunner persists the failure; one bad task must
-                    # not stop the worker from processing the queue.
-                    continue
+                self._run_with_timeout(task.id, 900.0)
             self._stop.wait(self.interval)
+
+    def _run_with_timeout(self, task_id: str, timeout: float) -> None:
+        outcome: dict[str, BaseException | None] = {"error": None}
+
+        def execute() -> None:
+            try:
+                self.runner.run(task_id)
+            except BaseException as exc:
+                outcome["error"] = exc
+
+        thread = Thread(target=execute, name=f"arqen-task-{task_id[:8]}", daemon=True)
+        thread.start()
+        thread.join(timeout)
+        if thread.is_alive():
+            self.store.update_task(task_id, "failed", "Task timed out after 15 minutes.")

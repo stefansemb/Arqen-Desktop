@@ -5,11 +5,14 @@ from arqen.providers.local import LocalProvider
 from arqen.providers.cloud import OpenAICompatibleProvider, GeminiProvider, ClaudeProvider
 from arqen.providers.remote import ArqenRemoteProvider
 from arqen.config.settings import load_provider_profile
-from concurrent.futures import ThreadPoolExecutor, TimeoutError
+from concurrent.futures import ThreadPoolExecutor
+from typing import Callable
 
 
 class FallbackProvider(AIProvider):
-    def __init__(self, primary: AIProvider, fallback: AIProvider, timeout: float = 10.0) -> None:
+    supports_tools = False
+
+    def __init__(self, primary: AIProvider, fallback: AIProvider, timeout: float = 90.0) -> None:
         self.primary = primary
         self.fallback = fallback
         self.provider_name = getattr(primary, "provider_name", "local")
@@ -17,25 +20,69 @@ class FallbackProvider(AIProvider):
         self.fallback_used = False
         self.fallback_reason = ""
         self.timeout = timeout
+        # The wrapper can only promise native tools when the fallback can
+        # handle the same protocol too; otherwise a primary failure would
+        # make the engine pass unsupported tool arguments to the fallback.
+        self.supports_tools = bool(
+            getattr(primary, "supports_tools", False)
+            and getattr(fallback, "supports_tools", False)
+        )
+
+    def _run(self, operation, messages):
+        executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="arqen-primary")
+        future = executor.submit(operation, messages)
+        try:
+            return future.result(timeout=self.timeout)
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
+
+    def _use_fallback(self, messages, exc):
+        error_lines = str(exc).splitlines()
+        self.fallback_reason = (error_lines[0] if error_lines else exc.__class__.__name__)[:120]
+        response = self.fallback.respond(messages)
+        self.fallback_used = True
+        self.provider_name = getattr(self.fallback, "provider_name", "fallback")
+        self.model = getattr(self.fallback, "model", "")
+        return response
 
     def respond(self, messages):
         self.fallback_used = False
         self.fallback_reason = ""
         try:
-            executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="arqen-primary")
-            future = executor.submit(self.primary.respond, messages)
-            try:
-                response = future.result(timeout=self.timeout)
-            finally:
-                executor.shutdown(wait=False, cancel_futures=True)
+            response = self._run(self.primary.respond, messages)
             self.provider_name = getattr(self.primary, "provider_name", "local")
             self.model = getattr(self.primary, "model", "")
             return response
         except Exception as exc:
-            error_lines = str(exc).splitlines()
-            self.fallback_reason = (error_lines[0] if error_lines else exc.__class__.__name__)[:120]
-            response = self.fallback.respond(messages)
+            return self._use_fallback(messages, exc)
+
+    def respond_stream(
+        self,
+        messages,
+        on_chunk: Callable[[str], None] | None = None,
+        should_cancel: Callable[[], bool] | None = None,
+        tools=None,
+    ):
+        self.fallback_used = False
+        self.fallback_reason = ""
+
+        def primary_call(items):
+            return self.primary.respond_stream(items, on_chunk, should_cancel, tools)
+
+        try:
+            response = self._run(primary_call, messages)
+            self.provider_name = getattr(self.primary, "provider_name", "local")
+            self.model = getattr(self.primary, "model", "")
+            return response
+        except Exception as exc:
+            if hasattr(self.fallback, "respond_stream"):
+                def fallback_call(items):
+                    return self.fallback.respond_stream(items, on_chunk, should_cancel, tools)
+                response = self._run(fallback_call, messages)
+            else:
+                response = self.fallback.respond(messages)
             self.fallback_used = True
+            self.fallback_reason = str(exc).splitlines()[0][:120] if str(exc) else exc.__class__.__name__
             self.provider_name = getattr(self.fallback, "provider_name", "fallback")
             self.model = getattr(self.fallback, "model", "")
             return response

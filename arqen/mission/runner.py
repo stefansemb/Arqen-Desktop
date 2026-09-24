@@ -43,7 +43,10 @@ class MissionRunner:
             self.store.update_task(task.id, "failed", str(exc))
             self._event(task, "failed", str(exc))
             raise
-        self.store.update_task(task.id, "completed")
+        current = self.store.get_task(task.id)
+        if current is None or current.status != "running":
+            return result
+        self.store.update_task(task.id, "completed", result=result)
         self._event(task, "completed", "Task completed")
         return result
 
