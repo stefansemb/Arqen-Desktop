@@ -59,10 +59,13 @@ from arqen.config.settings import (
     load_workspace_root,
     save_workspace_root,
 )
-from arqen.config.paths import APP_ROOT, config_dir, data_dir, workspace_root
+from arqen.config import paths
+from arqen.config.paths import APP_ROOT, config_dir, workspace_root
 from arqen.providers.config import ProviderConfig
 from arqen.providers.factory import create_provider
+from arqen.tools.builtins import create_builtin_registry
 from arqen.ui.strings import status_label, tr, tr_status
+from arqen.ui.tool_catalog import CATEGORIES, ToolInfo, tool_info
 from arqen.ui.theme import CyberpunkGreenTheme, VoicePalette, load_voice_palette
 from arqen.core.provider_metrics import ProviderMetrics
 from arqen.core.memory_store import MemoryStore
@@ -753,51 +756,23 @@ class ArqenWindow(QMainWindow):
         navigation_layout.addWidget(settings_nav)
         self.navigation_buttons["Settings"] = settings_nav
         layout.addWidget(navigation)
-        sidebar = QFrame(objectName="panel")
-        sidebar.setFixedWidth(320)
-        sidebar_layout = QVBoxLayout(sidebar)
-        sidebar_layout.addWidget(QLabel(tr("CHATS"), objectName="title"))
-        new_chat = QPushButton(tr("NEW CHAT"))
-        new_chat.clicked.connect(self.create_new_session)
-        sidebar_layout.addWidget(new_chat)
-        sidebar_layout.addStretch(1)
-        icon_row = QHBoxLayout()
+        # Created here, shown in the voice panel (see _create_visualization_dock).
         self.mic_button = QPushButton("🎙")
         self.mic_button.setAccessibleName(tr("Start/stop microphone recording"))
         self.mic_button.clicked.connect(self.toggle_microphone)
         self.voice_button = QPushButton("🔇")
         self.voice_button.setAccessibleName(tr("Toggle voice mode"))
         self.voice_button.clicked.connect(self.toggle_voice_mode)
-        settings_button = QPushButton("⚙")
-        settings_button.setToolTip(tr("Settings"))
-        settings_button.setAccessibleName(tr("Settings"))
-        settings_button.clicked.connect(self.open_settings)
-        for button in (settings_button,):
-            button.setMinimumWidth(0)
-            button.setStyleSheet(
-                "QPushButton { background: transparent; color: #b7ff18; border: none; "
-                "font-size: 20px; padding: 2px 8px; }"
-                "QPushButton:hover { color: #e1ff8a; background: #252a20; }"
-            )
-            icon_row.addWidget(button)
-        sidebar_layout.addLayout(icon_row)
 
         content = QWidget()
-        content_layout = QVBoxLayout(content)
-        session_bar = QHBoxLayout()
-        session_bar.addWidget(QLabel(tr("SESSION")))
-        self.chat_session_selector = QComboBox()
-        self.chat_session_selector.setMinimumWidth(220)
-        self.chat_session_selector.activated.connect(self._load_selected_chat_from_bar)
-        self.chat_session_selector.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.chat_session_selector.customContextMenuRequested.connect(self.show_session_menu)
-        self.chat_session_selector.setToolTip(tr("Right-click to rename or delete the selected chat"))
-        session_bar.addWidget(self.chat_session_selector, 1)
-        new_chat_button = QPushButton(tr("NEW CHAT"))
-        self._style_page_action(new_chat_button, primary=True)
-        new_chat_button.clicked.connect(self.create_new_session)
-        session_bar.addWidget(new_chat_button)
-        content_layout.addLayout(session_bar)
+        chat_page_layout = QHBoxLayout(content)
+        chat_page_layout.setContentsMargins(0, 0, 0, 0)
+        chat_page_layout.setSpacing(10)
+        chat_page_layout.addWidget(self._build_chat_list())
+        conversation = QWidget()
+        content_layout = QVBoxLayout(conversation)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        chat_page_layout.addWidget(conversation, 1)
         header = QFrame(objectName="panel")
         header_layout = QVBoxLayout(header)
         header_layout.addWidget(QLabel("ARQEN DESKTOP", objectName="title"))
@@ -864,7 +839,6 @@ class ArqenWindow(QMainWindow):
         content_layout.addWidget(header)
         content_layout.addWidget(chat_surface, 1)
         content_layout.addLayout(input_row)
-        sidebar.hide()
         self.navigation_stack = QStackedWidget()
         dashboard = QWidget()
         dashboard_layout = QVBoxLayout(dashboard)
@@ -936,7 +910,15 @@ class ArqenWindow(QMainWindow):
             page_layout.addWidget(QLabel(tr("This view will be expanded in the next UI step.")))
             page_layout.addStretch(1)
             self.navigation_stack.addWidget(page)
-        layout.addWidget(self.navigation_stack, 1)
+        main_column = QWidget()
+        main_layout = QVBoxLayout(main_column)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(6)
+        self._chat_confirmation: tuple[str, dict] | None = None
+        self.approval_bar = self._build_approval_bar()
+        main_layout.addWidget(self.approval_bar)
+        main_layout.addWidget(self.navigation_stack, 1)
+        layout.addWidget(main_column, 1)
         self.setCentralWidget(root)
         self._create_visualization_dock()
         self.engine.on_confirmation_required = self.show_confirmation
@@ -1229,30 +1211,262 @@ class ArqenWindow(QMainWindow):
         self._refresh_memory_view()
         self.navigation_stack.addWidget(page)
 
+    _TOOL_TABS = ("CATALOG", "AGENTS", "LOG")
+    _TOOL_CARD_COLUMNS = 3
+
     def _add_tools_view(self) -> None:
         page = QWidget()
         layout = QVBoxLayout(page)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(8)
         layout.addWidget(QLabel(tr("TOOL GATEWAY"), objectName="title"))
-        layout.addWidget(QLabel(tr("Catalog, policies and recent audit activity.")))
-        self.tools_view_list = QListWidget()
-        layout.addWidget(self.tools_view_list, 1)
-        refresh = QPushButton(tr("REFRESH TOOL GATEWAY"))
-        self._style_page_action(refresh)
-        refresh.clicked.connect(self._refresh_tools_view)
-        layout.addWidget(refresh)
-        self._refresh_tools_view()
+        self.tools_summary = QLabel("", objectName="status")
+        layout.addWidget(self.tools_summary)
+
+        controls = QHBoxLayout()
+        controls.setSpacing(6)
+        self.tools_tab_buttons: list[QPushButton] = []
+        for index, name in enumerate(self._TOOL_TABS):
+            button = QPushButton(tr(name))
+            button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+            button.clicked.connect(lambda _, value=index: self._select_tools_tab(value))
+            controls.addWidget(button)
+            self.tools_tab_buttons.append(button)
+        controls.addStretch(1)
+        self.tools_search = QLineEdit()
+        self.tools_search.setPlaceholderText(tr("Search tools..."))
+        self.tools_search.setClearButtonEnabled(True)
+        self.tools_search.setFixedWidth(260)
+        self.tools_search.textChanged.connect(lambda _: self._refresh_tool_catalog())
+        controls.addWidget(self.tools_search)
+        # A toggle chip rather than a checkbox: the theme draws no checkbox indicator.
+        self.tools_approval_only = QPushButton(tr("REQUIRES APPROVAL"))
+        self.tools_approval_only.setCheckable(True)
+        self.tools_approval_only.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.tools_approval_only.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self.tools_approval_only.setStyleSheet(
+            "QPushButton { background: #171d21; color: #c4cec9; border: 1px solid #30383a; border-radius: 5px; padding: 9px 14px; }"
+            "QPushButton:hover { color: #f2f0eb; border-color: #66736e; }"
+            "QPushButton:checked { color: #ffd166; border-color: #ffd166; background: #221f14; }"
+        )
+        self.tools_approval_only.toggled.connect(lambda _: self._refresh_tool_catalog())
+        controls.addWidget(self.tools_approval_only)
+        layout.addLayout(controls)
+
+        self.tools_stack = QStackedWidget()
+        self.tools_catalog_host, self.tools_catalog_layout = self._scrolling_page(self.tools_stack)
+        self.tools_agents_host, self.tools_agents_layout = self._scrolling_page(self.tools_stack)
+        self.tools_log = QListWidget()
+        self.tools_log.setSpacing(2)
+        # No item colour here: it would override the per-status colours.
+        self.tools_log.setStyleSheet(
+            "QListWidget { background: #111516; border: 1px solid #30383a; border-radius: 8px; padding: 6px; }"
+            "QListWidget::item { padding: 8px; border-bottom: 1px solid #252d30; }"
+        )
+        self.tools_stack.addWidget(self.tools_log)
+        layout.addWidget(self.tools_stack, 1)
+        self._select_tools_tab(0)
         self.navigation_stack.addWidget(page)
 
+    @staticmethod
+    def _scrolling_page(stack: QStackedWidget) -> tuple[QWidget, QVBoxLayout]:
+        host = QWidget()
+        host_layout = QVBoxLayout(host)
+        host_layout.setContentsMargins(0, 0, 6, 0)
+        host_layout.setSpacing(8)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setWidget(host)
+        stack.addWidget(scroll)
+        return host, host_layout
+
+    def _select_tools_tab(self, index: int) -> None:
+        self.tools_stack.setCurrentIndex(index)
+        for position, button in enumerate(self.tools_tab_buttons):
+            self._style_page_action(button, primary=position == index)
+        # Search and filter only apply to the catalogue.
+        self.tools_search.setVisible(index == 0)
+        self.tools_approval_only.setVisible(index == 0)
+
+    @staticmethod
+    def _clear_layout(layout) -> None:
+        while layout.count():
+            child = layout.takeAt(0)
+            if child.widget() is not None:
+                child.widget().deleteLater()
+            elif child.layout() is not None:
+                ArqenWindow._clear_layout(child.layout())
+
+    def _tool_users(self) -> dict[str, list[str]]:
+        """Agent names per tool, from the Mission Control agents' allowlists."""
+        users: dict[str, list[str]] = {}
+        store = getattr(self, "mission_store", None)
+        if store is None:
+            return users
+        agents = store.list_agents()
+        self._tool_agent_total = len(agents)
+        for agent in sorted(agents, key=lambda entry: entry.name.lower()):
+            for tool in agent.allowed_tools:
+                users.setdefault(tool, []).append(agent.name)
+        return users
+
     def _refresh_tools_view(self) -> None:
-        if not hasattr(self, "tools_view_list"):
+        if not hasattr(self, "tools_stack"):
             return
-        self.tools_view_list.clear()
+        catalog = self.engine.gateway.catalog()
+        approvals = sum(1 for item in catalog if item["requires_confirmation"])
+        self.tools_summary.setText(
+            tr("{count} tools  ·  {approval} require approval", count=len(catalog), approval=approvals)
+        )
+        self._refresh_tool_catalog()
+        self._refresh_tool_agents()
+        self._refresh_tool_log()
+
+    def _refresh_tool_catalog(self) -> None:
+        if not hasattr(self, "tools_catalog_layout"):
+            return
+        self._clear_layout(self.tools_catalog_layout)
+        query = self.tools_search.text().casefold().strip()
+        approval_only = self.tools_approval_only.isChecked()
+        users = self._tool_users()
+        sections: dict[str, list[tuple[dict, ToolInfo]]] = {}
         for item in self.engine.gateway.catalog():
-            self.tools_view_list.addItem(f"[{item['risk']}] {item['name']} — {item['description']}")
+            info = tool_info(item["name"], item["description"])
+            if approval_only and not item["requires_confirmation"]:
+                continue
+            haystack = " ".join((item["name"], info.title, info.summary, info.category)).casefold()
+            if query and query not in haystack:
+                continue
+            sections.setdefault(info.category, []).append((item, info))
+        if not sections:
+            empty = QLabel(tr("No tools match the search."))
+            empty.setStyleSheet("color: #8d969d; padding: 12px 2px;")
+            self.tools_catalog_layout.addWidget(empty)
+        for category in CATEGORIES:
+            entries = sections.get(category)
+            if not entries:
+                continue
+            self.tools_catalog_layout.addWidget(QLabel(f"{category.upper()}  ·  {len(entries)}", objectName="sectionLabel"))
+            grid = QGridLayout()
+            grid.setSpacing(8)
+            for index, (item, info) in enumerate(entries):
+                card = self._tool_card(item, info, users.get(item["name"], []))
+                grid.addWidget(card, index // self._TOOL_CARD_COLUMNS, index % self._TOOL_CARD_COLUMNS)
+            for column in range(self._TOOL_CARD_COLUMNS):
+                grid.setColumnStretch(column, 1)
+            self.tools_catalog_layout.addLayout(grid)
+            self.tools_catalog_layout.addSpacing(6)
+        self.tools_catalog_layout.addStretch(1)
+
+    def _tool_card(self, item: dict, info: ToolInfo, agents: list[str]) -> QFrame:
+        card = QFrame(objectName="toolCard")
+        needs_approval = item["requires_confirmation"]
+        border = "#6b5a2a" if needs_approval else "#30383a"
+        card.setStyleSheet(
+            f"QFrame#toolCard {{ background: #171d21; border: 1px solid {border}; border-radius: 8px; }}"
+        )
+        card.setToolTip(item["description"])
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(12, 10, 12, 10)
+        card_layout.setSpacing(3)
+        heading = QHBoxLayout()
+        title = QLabel(info.title)
+        title.setStyleSheet("color: #f2f0eb; font-weight: bold; font-size: 13px;")
+        heading.addWidget(title)
+        heading.addStretch(1)
+        if needs_approval:
+            badge = QLabel(tr("APPROVAL"))
+            badge.setStyleSheet(
+                "color: #ffd166; border: 1px solid #ffd166; border-radius: 8px; padding: 1px 6px; font-size: 9px;"
+            )
+            heading.addWidget(badge)
+        card_layout.addLayout(heading)
+        name = QLabel(item["name"])
+        name.setStyleSheet("color: #657078; font-size: 10px;")
+        card_layout.addWidget(name)
+        summary = QLabel(info.summary)
+        summary.setWordWrap(True)
+        summary.setStyleSheet("color: #c4cec9; font-size: 11px;")
+        card_layout.addWidget(summary)
+        if agents:
+            # A tool every agent has is baseline; listing all eight names is noise.
+            everyone = len(agents) > 1 and len(agents) == getattr(self, "_tool_agent_total", 0)
+            names = tr("all agents") if everyone else " · ".join(agents)
+            used_by = QLabel(tr("Used by: {agents}", agents=names))
+            used_by.setWordWrap(True)
+            used_by.setStyleSheet("color: #9fce20; font-size: 10px; padding-top: 2px;")
+            card_layout.addWidget(used_by)
+        card_layout.addStretch(1)
+        return card
+
+    def _refresh_tool_agents(self) -> None:
+        self._clear_layout(self.tools_agents_layout)
+        store = getattr(self, "mission_store", None)
+        agents = sorted(store.list_agents(), key=lambda entry: entry.name.lower()) if store is not None else []
+        for agent in agents:
+            card = QFrame(objectName="toolCard")
+            card.setStyleSheet("QFrame#toolCard { background: #171d21; border: 1px solid #30383a; border-radius: 8px; }")
+            card_layout = QVBoxLayout(card)
+            card_layout.setContentsMargins(14, 10, 14, 10)
+            card_layout.setSpacing(3)
+            heading = QHBoxLayout()
+            heading.setSpacing(10)
+            name = QLabel(agent.name)
+            name.setStyleSheet("color: #f2f0eb; font-weight: bold; font-size: 13px;")
+            heading.addWidget(name)
+            role = QLabel(agent.role)
+            role.setStyleSheet("color: #8d969d; font-size: 11px;")
+            heading.addWidget(role)
+            heading.addStretch(1)
+            count = QLabel(tr("{count} tools", count=len(agent.allowed_tools)))
+            count.setStyleSheet("color: #9fce20; font-size: 11px;")
+            heading.addWidget(count)
+            card_layout.addLayout(heading)
+            titles = [tool_info(tool).title for tool in agent.allowed_tools] or [tr("no tools")]
+            tools = QLabel(" · ".join(titles))
+            tools.setWordWrap(True)
+            tools.setStyleSheet("color: #c4cec9; font-size: 11px;")
+            card_layout.addWidget(tools)
+            if agent.approval_tools:
+                approval = QLabel(tr(
+                    "Requires approval: {tools}",
+                    tools=" · ".join(tool_info(tool).title for tool in agent.approval_tools),
+                ))
+                approval.setWordWrap(True)
+                approval.setStyleSheet("color: #ffd166; font-size: 10px;")
+                card_layout.addWidget(approval)
+            self.tools_agents_layout.addWidget(card)
+        # Gateway policies apply to the chat engine; show them only when set.
         for policy in self.engine.gateway.policy_view():
-            self.tools_view_list.addItem(tr("POLICY {agent}: {tools}", agent=policy["agent"], tools=policy["allowed_tools"] or tr("all")))
-        for entry in self.engine.gateway.audit_entries(10):
-            self.tools_view_list.addItem(tr("AUDIT {status}: {tool} ({time})", status=entry["status"], tool=entry["tool"], time=entry["time"]))
+            allowed = policy["allowed_tools"]
+            text = tr("POLICY {agent}: {tools}", agent=policy["agent"], tools=", ".join(allowed) if allowed else tr("all"))
+            label = QLabel(text)
+            label.setStyleSheet("color: #8d969d; font-size: 11px;")
+            self.tools_agents_layout.addWidget(label)
+        self.tools_agents_layout.addStretch(1)
+
+    _AUDIT_COLORS = {"ok": "#b7ff18", "failed": "#ff6b6b", "approval": "#ffd166"}
+
+    def _refresh_tool_log(self) -> None:
+        self.tools_log.clear()
+        entries = list(reversed(self.engine.gateway.audit_entries(200)))
+        if not entries:
+            self.tools_log.addItem(tr("No tool calls logged yet."))
+            return
+        for entry in entries:
+            try:
+                moment = datetime.fromisoformat(entry["time"]).astimezone().strftime("%Y-%m-%d  %H:%M:%S")
+            except (KeyError, TypeError, ValueError):
+                moment = str(entry.get("time", ""))
+            status = entry.get("status", "")
+            agent = entry.get("agent", "")
+            agent_label = "Arqen" if agent in {"", "default"} else agent
+            title = tool_info(entry.get("tool", "")).title
+            item = QListWidgetItem(f"{moment}   {tr(f'audit:{status}'):<12}{title}  ·  {agent_label}")
+            item.setForeground(QColor(self._AUDIT_COLORS.get(status, "#c4cec9")))
+            item.setToolTip(entry.get("tool", ""))
+            self.tools_log.addItem(item)
 
     def _refresh_memory_view(self) -> None:
         if not hasattr(self, "memory_view_list"):
@@ -1305,7 +1519,7 @@ class ArqenWindow(QMainWindow):
         if not hasattr(self, "content_view_list"):
             return
         self.content_view_list.clear()
-        root = data_dir()
+        root = paths.data_dir()
         if root.exists():
             for path in sorted(root.rglob("*")):
                 if path.is_file() and path.name != "mission.sqlite3":
@@ -1342,8 +1556,10 @@ class ArqenWindow(QMainWindow):
 
     def _create_mission_dock(self) -> None:
         """Create the first functional Mission Control surface."""
-        self.mission_store = MissionStore(data_dir() / "mission.sqlite3")
-        self.mission_runner = MissionRunner(self.mission_store, lambda: self.engine)
+        # Looked up through the module so tests that redirect the data
+        # directory keep their tasks out of the real mission database.
+        self.mission_store = MissionStore(paths.data_dir() / "mission.sqlite3")
+        self.mission_runner = MissionRunner(self.mission_store, self._new_task_engine)
         self.workflow_runner = WorkflowRunner(self.mission_store, self.mission_runner)
         self.scheduler_worker = SchedulerWorker(MissionScheduler(self.mission_store, self.workflow_runner))
         self.scheduler_worker.start()
@@ -1381,6 +1597,7 @@ class ArqenWindow(QMainWindow):
         self.mission_activity_timer.timeout.connect(self.refresh_dashboard)
         self.mission_activity_timer.timeout.connect(self.refresh_mission_tasks)
         self.mission_activity_timer.timeout.connect(self.refresh_mission_approvals)
+        self.mission_activity_timer.timeout.connect(self._refresh_approval_bar)
         self.mission_activity_timer.start()
         panel_layout.addWidget(QLabel(tr("SCHEDULES")))
         legacy_schedules = QListWidget()
@@ -1507,6 +1724,18 @@ class ArqenWindow(QMainWindow):
         self.refresh_mission_workflow_runs()
         self.refresh_mission_activity()
         self.refresh_dashboard()
+
+    def _new_task_engine(self) -> ConversationEngine:
+        """A separate engine for each task, built from the saved settings.
+
+        Tasks used to borrow the chat engine.  An agent's run then narrowed its
+        tool list and approval rules for good, so the chat lost tools until a
+        restart, and task prompts landed in whatever chat was open.
+        """
+        return ConversationEngine(
+            provider=create_provider(load_provider_config()),
+            tools=create_builtin_registry(),
+        )
 
     def refresh_dashboard(self) -> None:
         if not hasattr(self, "dashboard_cards"):
@@ -2030,7 +2259,8 @@ class ArqenWindow(QMainWindow):
         self.refresh_mission_tasks()
 
     def _open_pending_approvals(self) -> None:
-        self._select_navigation("Mission Control")
+        # The approvals list lives on the Tasks page.
+        self._select_navigation("Tasks")
         if hasattr(self, "mission_approvals") and self.mission_approvals.count():
             item = self.mission_approvals.item(0)
             self.mission_approvals.setCurrentItem(item)
@@ -2044,14 +2274,17 @@ class ArqenWindow(QMainWindow):
             item.setData(Qt.ItemDataRole.UserRole, approval.id)
             self.mission_approvals.addItem(item)
 
-    def _decide_mission_approval(self, status: str) -> None:
-        item = self.mission_approvals.currentItem()
-        if item is None:
-            return
-        approval_id = item.data(Qt.ItemDataRole.UserRole)
+    def _decide_mission_approval(self, status: str, approval_id: str | None = None) -> None:
+        if approval_id is None:
+            item = self.mission_approvals.currentItem()
+            if item is None:
+                return
+            approval_id = item.data(Qt.ItemDataRole.UserRole)
         self.mission_store.decide_approval(approval_id, status)
         approval = self.mission_store.get_approval(approval_id)
-        if status == "approved" and approval is not None:
+        # Resume on both answers: a rejection is what moves the task to
+        # cancelled, otherwise it waits for approval forever.
+        if approval is not None:
             try:
                 self.mission_runner.resume(approval.task_id)
             except Exception as exc:
@@ -2059,6 +2292,7 @@ class ArqenWindow(QMainWindow):
         self.refresh_mission_tasks()
         self.refresh_mission_agents()
         self.refresh_mission_approvals()
+        self._refresh_approval_bar()
         self._show_mission_task()
 
     def _selected_mission_task(self) -> Task | None:
@@ -2201,14 +2435,50 @@ class ArqenWindow(QMainWindow):
         self.mission_thread = None
         self.mission_worker = None
 
+    def _build_chat_list(self) -> QFrame:
+        panel = QFrame(objectName="chatListPanel")
+        panel.setFixedWidth(250)
+        panel.setStyleSheet(
+            "QFrame#chatListPanel { background: #111516; border: 1px solid #252d30; border-radius: 8px; }"
+        )
+        panel_layout = QVBoxLayout(panel)
+        panel_layout.setContentsMargins(10, 12, 10, 10)
+        panel_layout.setSpacing(8)
+        panel_layout.addWidget(QLabel(tr("CHATS"), objectName="sectionLabel"))
+        new_chat = QPushButton(tr("NEW CHAT"))
+        self._style_page_action(new_chat, primary=True)
+        new_chat.clicked.connect(self.create_new_session)
+        panel_layout.addWidget(new_chat)
+        self.chat_list = QListWidget()
+        self.chat_list.setTextElideMode(Qt.TextElideMode.ElideRight)
+        self.chat_list.setUniformItemSizes(True)
+        self.chat_list.setToolTip(tr("Right-click to open, rename or delete. F2 renames, Delete removes."))
+        self.chat_list.setStyleSheet(
+            "QListWidget { background: transparent; border: none; outline: none; }"
+            "QListWidget::item { color: #c4cec9; padding: 7px 8px; border-radius: 5px; border-left: 2px solid transparent; }"
+            "QListWidget::item:hover { background: #1b2226; color: #f2f0eb; }"
+            "QListWidget::item:selected { background: #1f2a20; color: #f2f0eb; border-left: 2px solid #b7ff18; }"
+        )
+        self.chat_list.itemClicked.connect(lambda _: self.load_selected_session())
+        self.chat_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.chat_list.customContextMenuRequested.connect(self.show_session_menu)
+        self.chat_list.installEventFilter(self)
+        panel_layout.addWidget(self.chat_list, 1)
+        return panel
+
     def show_session_menu(self, position) -> None:
-        if self.selected_session() is None:
+        item = self.chat_list.itemAt(position)
+        if item is None:
             return
+        self.chat_list.setCurrentItem(item)
         menu = QMenu(self)
+        open_action = menu.addAction(tr("Open"))
         rename_action = menu.addAction(tr("Rename"))
         delete_action = menu.addAction(tr("Delete"))
-        selected = menu.exec(self.chat_session_selector.mapToGlobal(position))
-        if selected == rename_action:
+        selected = menu.exec(self.chat_list.viewport().mapToGlobal(position))
+        if selected == open_action:
+            self.load_selected_session()
+        elif selected == rename_action:
             self.rename_selected_session()
         elif selected == delete_action:
             self.delete_selected_session()
@@ -2355,6 +2625,13 @@ class ArqenWindow(QMainWindow):
     }
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if watched is getattr(self, "chat_list", None) and event.type() == QEvent.Type.KeyPress:
+            if event.key() == Qt.Key.Key_F2:
+                self.rename_selected_session()
+                return True
+            if event.key() == Qt.Key.Key_Delete:
+                self.delete_selected_session()
+                return True
         if event.type() in {QEvent.Type.Move, QEvent.Type.Resize}:
             for attribute, key in self._DOCK_GEOMETRY_KEYS.items():
                 dock = getattr(self, attribute, None)
@@ -2730,29 +3007,26 @@ class ArqenWindow(QMainWindow):
         return result[:-4] if result.endswith("<br>") else result
 
     def refresh_sessions(self) -> None:
-        selector = getattr(self, "chat_session_selector", None)
-        if selector is None:
+        chat_list = getattr(self, "chat_list", None)
+        if chat_list is None:
             return
         try:
-            selector.blockSignals(True)
-            selector.clear()
-            for session in self.engine.session_store.list_sessions():
-                selector.addItem(session.title, session.session_id)
+            chat_list.blockSignals(True)
+            chat_list.clear()
             current_id = self.engine.session.session_id if self.engine.session else None
-            current_index = selector.findData(current_id)
-            if current_index >= 0:
-                selector.setCurrentIndex(current_index)
-            selector.blockSignals(False)
+            for session in self.engine.session_store.list_sessions():
+                # Multi-line titles (task instructions) would break the row height.
+                title = " ".join(session.title.split()) or tr("New chat")
+                item = QListWidgetItem(title)
+                item.setData(Qt.ItemDataRole.UserRole, session.session_id)
+                item.setToolTip(title)
+                chat_list.addItem(item)
+                if session.session_id == current_id:
+                    chat_list.setCurrentItem(item)
+            chat_list.blockSignals(False)
         except RuntimeError:
             # A late response callback may run after Qt has deleted the chat UI.
             return
-
-    def _load_selected_chat_from_bar(self, index: int) -> None:
-        selector = getattr(self, "chat_session_selector", None)
-        if selector is None:
-            return
-        selector.setCurrentIndex(index)
-        self.load_selected_session()
 
     def create_new_session(self) -> None:
         title, accepted = QInputDialog.getText(self, tr("New chat"), tr("Title:"))
@@ -2780,9 +3054,10 @@ class ArqenWindow(QMainWindow):
         self.set_status(tr("READY // SESSION LOADED"))
 
     def selected_session(self):
-        """The chat picked in the session bar, looked up fresh from the store."""
-        selector = getattr(self, "chat_session_selector", None)
-        session_id = selector.currentData() if selector is not None else None
+        """The chat picked in the chat list, looked up fresh from the store."""
+        chat_list = getattr(self, "chat_list", None)
+        item = chat_list.currentItem() if chat_list is not None else None
+        session_id = item.data(Qt.ItemDataRole.UserRole) if item is not None else None
         if not session_id:
             return None
         matches = [s for s in self.engine.session_store.list_sessions() if s.session_id == session_id]
@@ -2818,6 +3093,97 @@ class ArqenWindow(QMainWindow):
             self.output.clear()
         self.refresh_sessions()
 
+    def _build_approval_bar(self) -> QFrame:
+        bar = QFrame(objectName="approvalBar")
+        bar.setStyleSheet(
+            "QFrame#approvalBar { background: #221f14; border: 1px solid #ffd166; border-radius: 8px; }"
+        )
+        row = QHBoxLayout(bar)
+        row.setContentsMargins(14, 8, 10, 8)
+        row.setSpacing(10)
+        heading = QLabel(tr("APPROVAL REQUIRED"))
+        heading.setStyleSheet("color: #ffd166; font-weight: bold; font-size: 11px; letter-spacing: 1px;")
+        row.addWidget(heading)
+        self.approval_detail = QLabel()
+        self.approval_detail.setStyleSheet("color: #f2f0eb; font-size: 12px;")
+        self.approval_detail.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        row.addWidget(self.approval_detail, 1)
+        self.approval_more = QPushButton()
+        self.approval_more.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.approval_more.setStyleSheet(
+            "QPushButton { background: transparent; color: #ffd166; border: none; padding: 4px 6px; }"
+            "QPushButton:hover { text-decoration: underline; }"
+        )
+        self.approval_more.clicked.connect(self._open_pending_approvals)
+        row.addWidget(self.approval_more)
+        approve = QPushButton(tr("APPROVE"))
+        reject = QPushButton(tr("REJECT"))
+        self._style_page_action(approve, primary=True)
+        self._style_page_action(reject)
+        approve.clicked.connect(lambda: self._answer_first_approval(True))
+        reject.clicked.connect(lambda: self._answer_first_approval(False))
+        row.addWidget(approve)
+        row.addWidget(reject)
+        bar.hide()
+        return bar
+
+    def _pending_decisions(self) -> list[dict]:
+        """Everything waiting on the user: the chat's tool first, then agent tasks."""
+        decisions = []
+        if self._chat_confirmation is not None:
+            name, arguments = self._chat_confirmation
+            decisions.append({"kind": "chat", "tool": name, "arguments": arguments, "source": tr("Arqen in chat")})
+        store = getattr(self, "mission_store", None)
+        if store is not None:
+            for approval in store.list_approvals("pending"):
+                task = store.get_task(approval.task_id)
+                agent = store.get_agent(task.agent_id) if task is not None and task.agent_id else None
+                source = task.title if task is not None else tr("task {id}", id=approval.task_id[:8])
+                if agent is not None:
+                    source = f"{agent.name}  ·  {source}"
+                decisions.append({
+                    "kind": "mission", "id": approval.id, "tool": approval.action,
+                    "arguments": approval.payload.get("arguments", approval.payload) if isinstance(approval.payload, dict) else {},
+                    "source": source,
+                })
+        return decisions
+
+    @staticmethod
+    def _describe_decision(decision: dict) -> str:
+        title = tool_info(decision["tool"]).title
+        values = [str(value) for value in (decision["arguments"] or {}).values() if str(value).strip()]
+        detail = ", ".join(values)
+        if len(detail) > 90:
+            detail = detail[:87] + "..."
+        parts = [title, detail, decision["source"]] if detail else [title, decision["source"]]
+        return "  ·  ".join(parts)
+
+    def _refresh_approval_bar(self) -> None:
+        bar = getattr(self, "approval_bar", None)
+        if bar is None:
+            return
+        decisions = self._pending_decisions()
+        if not decisions:
+            bar.hide()
+            return
+        self.approval_detail.setText(self._describe_decision(decisions[0]))
+        self.approval_detail.setToolTip(self._describe_decision(decisions[0]))
+        extra = len(decisions) - 1
+        self.approval_more.setVisible(extra > 0)
+        self.approval_more.setText(tr("+{count} more", count=extra))
+        bar.show()
+
+    def _answer_first_approval(self, accepted: bool) -> None:
+        decisions = self._pending_decisions()
+        if not decisions:
+            self._refresh_approval_bar()
+            return
+        first = decisions[0]
+        if first["kind"] == "chat":
+            self.resolve_confirmation(accepted)
+        else:
+            self._decide_mission_approval("approved" if accepted else "rejected", approval_id=first["id"])
+
     def show_confirmation(self, name: str, arguments: dict | None = None) -> None:
         self.set_status(tr("CONFIRMATION REQUIRED // {name}", name=name.upper()))
         details = ""
@@ -2827,6 +3193,8 @@ class ArqenWindow(QMainWindow):
             )
         self._end_streaming_block()
         self.append_message(tr("CONFIRM"), f"{name}{details}", CyberpunkGreenTheme.accent)
+        self._chat_confirmation = (name, dict(arguments or {}))
+        self._refresh_approval_bar()
         self.confirm_button.setVisible(True)
         self.cancel_button.setVisible(True)
         self.confirm_button.setEnabled(True)
@@ -2835,6 +3203,8 @@ class ArqenWindow(QMainWindow):
     def resolve_confirmation(self, accepted: bool) -> None:
         self.confirm_button.setVisible(False)
         self.cancel_button.setVisible(False)
+        self._chat_confirmation = None
+        self._refresh_approval_bar()
         if not accepted:
             result = self.engine.confirm_pending_tool(False)
             self.output.append(f"<b>ARQEN:</b> {result}")

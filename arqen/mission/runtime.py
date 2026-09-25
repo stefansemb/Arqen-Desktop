@@ -3,7 +3,9 @@ import subprocess
 from pathlib import Path
 from typing import Protocol
 
+from arqen.config import paths
 from arqen.core.engine import ConversationEngine
+from arqen.core.session_store import SessionStore
 from arqen.tools.gateway import ToolPolicy
 
 
@@ -31,6 +33,13 @@ class ArqenRuntime:
             approval_tools: tuple[str, ...] | None = None,
             on_approval: Callable[[str, dict], None] | None = None) -> str:
         engine = self.engine_factory()
+        if isinstance(engine, ConversationEngine):
+            # A task run is not a chat: its transcript is kept, but apart from
+            # the user's conversations so it never shows up in the chat list.
+            engine.session_store = SessionStore(paths.data_dir() / "mission-sessions")
+            engine.new_session()
+        # The limits below change the engine itself, so the factory must hand
+        # out a fresh engine per task and never the one the user chats with.
         if allowed_tools:
             engine.tools._tools = {name: tool for name, tool in engine.tools._tools.items() if name in allowed_tools}
             # Keep the policy boundary active even for direct/internal tool

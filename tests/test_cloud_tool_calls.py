@@ -210,7 +210,8 @@ def test_a_spent_tool_budget_still_ends_in_words(tmp_path, monkeypatch) -> None:
     assert not answer.startswith("echo:"), "raw tool output must not be served as the answer"
 
 
-def test_only_writing_tools_ask_for_confirmation() -> None:
+def test_only_irreversible_tools_ask_for_confirmation() -> None:
+    """Writing files, spending money and ending processes ask; nothing else does."""
     from arqen.tools.builtins import create_builtin_registry
 
     gated = {tool["name"] for tool in create_builtin_registry().describe() if tool["requires_confirmation"]}
@@ -220,4 +221,5 @@ def test_only_writing_tools_ask_for_confirmation() -> None:
         "move_workspace_file",
         "undo_workspace_file_change",
         "generate_image",
+        "close_program",
     }

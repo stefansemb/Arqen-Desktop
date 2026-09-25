@@ -17,9 +17,12 @@ Repot ligger på `https://github.com/stefansemb/Arqen-Desktop`, gren `main`.
 - Streaming, nativa verktygsanrop och avbrytning mot OpenAI-kompatibla moln.
 - Verktygsloopen kör upp till 16 steg per tur. Tar budgeten slut ställs en sista
   fråga utan verktyg, så turen alltid slutar i ord och aldrig i rå verktygsutdata.
-- Bekräftelse krävs **bara** för verktyg som skriver till disk: `write`, `delete`,
-  `move`, `undo` samt `generate_image` (som både skriver fil och kostar pengar).
-  Att öppna program, filer eller webbsidor sker utan att fråga.
+- Bekräftelse krävs **bara** för verktyg som inte går att ångra: de som skriver
+  till disk (`write`, `delete`, `move`, `undo`), `generate_image` (som både
+  skriver fil och kostar pengar) och `close_program` (osparat arbete kan gå
+  förlorat). `close_program` kontrollerar först att processen finns och är
+  entydig, så man tillfrågas aldrig om något som inte körs. Att öppna program,
+  filer eller webbsidor sker utan att fråga.
 - En godkänd bekräftelse lämnar tillbaka turen till modellen, som ser resultatet
   och avslutar med egna ord.
 - Arbetskatalog väljs i inställningarna, fliken Arbetsyta. Tom betyder programmets
@@ -57,6 +60,20 @@ veckovisa, månatliga eller engångskörningar och visas i mänskligt språk.
 One-time-schedules stängs av efter körning. Tasks har timeout/recovery,
 resultatlagring och kan tas bort med bekräftelse; running tasks kan tas bort,
 men tasks som väntar på approval skyddas.
+
+Varje task körs i en egen `ConversationEngine` (`ArqenWindow._new_task_engine`),
+byggd från sparade inställningar. Tidigare lånade tasks chattens engine, vilket
+permanent smalnade av chattens verktyg och skrev task-prompter i öppen chatt.
+`ArqenRuntime` sparar task-samtal i `data/mission-sessions`, skilt från chattarna.
+
+Godkännanden samlas i en gul rad överst i alla vyer: chattens verktygsfrågor och
+agenternas approvals, med GODKÄNN/AVVISA direkt. Ett avslag återupptar tasken så
+att den blir avbruten i stället för att vänta för evigt.
+
+Chatt-vyn har en chattlista till vänster (högerklick: Öppna, Byt namn, Ta bort;
+F2 och Delete). Verktyg-vyn har flikarna Katalog, Agenter och Logg; svenska namn
+och kategorier ligger i `arqen/ui/tool_catalog.py`, och ett test kräver att
+varje nytt verktyg får en post där.
 
 Scout är research-agent och har tillgång till `search_web` och
 `fetch_webpage`. Reddit kan blockera direkthämtning, så framtida webbresearch

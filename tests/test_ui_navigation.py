@@ -33,9 +33,12 @@ def test_mission_control_navigation_is_complete():
 
 
 @pytest.mark.skipif(os.name != "nt" and not os.environ.get("DISPLAY"), reason="Qt display is unavailable")
-def test_chat_session_bar_loads_every_chat():
-    """The session bar once read from a deleted list widget and crashed on click."""
+def test_chat_list_opens_renames_and_deletes_chats(monkeypatch):
+    """The chat picker once read from a deleted widget and crashed on click."""
     import gc
+
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtWidgets import QInputDialog, QMessageBox
 
     app = QApplication.instance() or QApplication([])
     config = load_provider_config()
@@ -43,13 +46,61 @@ def test_chat_session_bar_loads_every_chat():
     window = ArqenWindow(engine, provider_label=config.name, profile_name=config.profile_name)
     engine.new_session("first")
     engine.session_store.save(engine.session)
-    engine.new_session("second")
+    engine.new_session("second\nline")
     engine.session_store.save(engine.session)
     gc.collect()
     window.refresh_sessions()
-    selector = window.chat_session_selector
-    assert selector.count() >= 2
-    for index in range(selector.count()):
-        window._load_selected_chat_from_bar(index)
-        assert engine.session.session_id == selector.itemData(index)
+    chat_list = window.chat_list
+    assert chat_list.count() >= 2
+    # Multi-line titles are flattened so every row keeps one line.
+    assert "second line" in [chat_list.item(row).text() for row in range(chat_list.count())]
+    for row in range(chat_list.count()):
+        chat_list.setCurrentRow(row)
+        window.load_selected_session()
+        assert engine.session.session_id == chat_list.item(row).data(Qt.ItemDataRole.UserRole)
+
+    target = next(row for row in range(chat_list.count()) if chat_list.item(row).text() == "first")
+    chat_list.setCurrentRow(target)
+    monkeypatch.setattr(QInputDialog, "getText", lambda *args, **kwargs: ("renamed", True))
+    window.rename_selected_session()
+    titles = [chat_list.item(row).text() for row in range(chat_list.count())]
+    assert "renamed" in titles and "first" not in titles
+
+    chat_list.setCurrentRow(titles.index("renamed"))
+    monkeypatch.setattr(QMessageBox, "question", lambda *args, **kwargs: QMessageBox.StandardButton.Yes)
+    window.delete_selected_session()
+    assert "renamed" not in [chat_list.item(row).text() for row in range(chat_list.count())]
+    window.close()
+
+
+@pytest.mark.skipif(os.name != "nt" and not os.environ.get("DISPLAY"), reason="Qt display is unavailable")
+def test_approval_bar_shows_and_answers_pending_decisions():
+    from arqen.mission import Task
+
+    app = QApplication.instance() or QApplication([])
+    config = load_provider_config()
+    window = ArqenWindow(
+        ConversationEngine(provider=create_provider(config), tools=create_builtin_registry()),
+        provider_label=config.name,
+        profile_name=config.profile_name,
+    )
+    assert window.approval_bar.isHidden()
+
+    window.show_confirmation("close_program", {"target": "notepad"})
+    assert not window.approval_bar.isHidden()
+    assert "notepad" in window.approval_detail.text()
+    window.resolve_confirmation(False)
+    assert window.approval_bar.isHidden()
+
+    task = Task.create("Skriv rapport", "skriv", agent_id=None)
+    window.mission_store.save_task(task)
+    window.mission_store.update_task(task.id, "running")
+    window.mission_runner.request_approval(task.id, "write_workspace_file", {"path": "rapport.md"})
+    window._refresh_approval_bar()
+    assert "Skriv rapport" in window.approval_detail.text()
+
+    # Rejecting must cancel the task, not leave it waiting forever.
+    window._answer_first_approval(False)
+    assert window.mission_store.get_task(task.id).status == "cancelled"
+    assert window.approval_bar.isHidden()
     window.close()
