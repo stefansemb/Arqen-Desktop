@@ -6,6 +6,9 @@ class Tool(ABC):
     name: str
     description: str
     requires_confirmation: bool = False
+    # Offered to the model on every turn, even when the per-turn selection of
+    # relevant tools finds no words in common with the conversation.
+    always_offered: bool = False
     arguments_schema: dict[str, type] = {}
 
     def normalize_arguments(self, arguments: dict[str, Any]) -> dict[str, Any]:

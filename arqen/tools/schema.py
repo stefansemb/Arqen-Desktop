@@ -86,6 +86,12 @@ def build_relevant_tool_schemas(
         return build_tool_schemas(registry)
     selected = [entry["name"] for _, entry in sorted(ranked, key=lambda item: item[0], reverse=True)[:limit]]
     selected.extend(used)
+    # Some tools answer to what the user says about themselves rather than to
+    # a request, so no word overlap can be expected to pick them.
+    selected.extend(
+        entry["name"] for entry in entries
+        if getattr(registry.get(entry["name"]), "always_offered", False)
+    )
     return build_tool_schemas(registry, selected)
 
 

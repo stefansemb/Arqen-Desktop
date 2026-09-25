@@ -120,7 +120,11 @@ class ConversationEngine:
                     "written it: the user already has the file, so say what you did and what "
                     "is in it instead of quoting it back. "
                     "Never claim to remember a person, fact, or note unless it appears in User-approved memory. "
-                    "Do not invent memory entries or say that notes were saved without an explicit memory command."
+                    "Do not invent memory entries or say that notes were saved without an explicit memory command. "
+                    "When the user shares something lasting about themselves or their work, such as a "
+                    "preference, a decision or a fact about a project, suggest it with propose_memory "
+                    "if that tool is available, and say it is waiting for their approval under Minne. "
+                    "Do not suggest what is already in memory."
                     f"{tool_catalogue}"
                     f"{self._MEMORY_HEADING}{memory_context}"
                 ),

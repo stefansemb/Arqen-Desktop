@@ -280,6 +280,17 @@ _SV: dict[str, str] = {
     "MEMORY": "MINNE",
     "User-approved long-term context.": "Långtidsminne som du har godkänt.",
     "REFRESH MEMORY": "UPPDATERA MINNET",
+    "SUGGESTIONS TO REVIEW": "FÖRSLAG ATT GRANSKA",
+    "APPROVED MEMORIES": "GODKÄNDA MINNEN",
+    "{approved} approved  ·  {proposed} suggested  ·  {obsolete} obsolete":
+        "Godkända: {approved}  ·  Förslag: {proposed}  ·  Föråldrade: {obsolete}",
+    "Suggested by Arqen": "Föreslaget av Arqen",
+    "Suggested": "Föreslaget",
+    "obsolete": "föråldrad",
+    "MARK OBSOLETE": "MARKERA FÖRÅLDRAD",
+    "RESTORE": "ÅTERSTÄLL",
+    'Nothing approved yet. Say "kom ihåg att ..." or approve a suggestion.':
+        'Inget godkänt än. Säg "kom ihåg att ..." eller godkänn ett förslag.',
     "DELETE": "TA BORT",
     "Edit memory": "Redigera minne",
     "Memory:": "Minne:",

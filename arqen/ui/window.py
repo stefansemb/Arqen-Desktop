@@ -1190,22 +1190,43 @@ class ArqenWindow(QMainWindow):
     def _add_memory_view(self) -> None:
         page = QWidget()
         page_layout = QVBoxLayout(page)
+        page_layout.setContentsMargins(18, 18, 18, 18)
+        page_layout.setSpacing(8)
         page_layout.addWidget(QLabel(tr("MEMORY"), objectName="title"))
-        page_layout.addWidget(QLabel(tr("User-approved long-term context.")))
+        self.memory_summary = QLabel("", objectName="status")
+        page_layout.addWidget(self.memory_summary)
+
+        self.memory_proposals_heading = QLabel(tr("SUGGESTIONS TO REVIEW"), objectName="sectionLabel")
+        page_layout.addWidget(self.memory_proposals_heading)
+        self.memory_proposals_host = QWidget()
+        self.memory_proposals_layout = QVBoxLayout(self.memory_proposals_host)
+        self.memory_proposals_layout.setContentsMargins(0, 0, 0, 0)
+        self.memory_proposals_layout.setSpacing(6)
+        page_layout.addWidget(self.memory_proposals_host)
+
+        page_layout.addWidget(QLabel(tr("APPROVED MEMORIES"), objectName="sectionLabel"))
         self.memory_view_list = QListWidget()
+        self.memory_view_list.setWordWrap(True)
+        self.memory_view_list.setSpacing(2)
+        self.memory_view_list.setStyleSheet(
+            "QListWidget { background: #111516; border: 1px solid #30383a; border-radius: 8px; padding: 6px; }"
+            "QListWidget::item { padding: 8px; border-bottom: 1px solid #252d30; }"
+            "QListWidget::item:selected { background: #1f2a20; border-left: 2px solid #b7ff18; }"
+        )
         self.memory_view_list.itemDoubleClicked.connect(self._edit_memory_item)
+        self.memory_view_list.currentItemChanged.connect(lambda *_: self._update_memory_actions())
         page_layout.addWidget(self.memory_view_list, 1)
         actions = QHBoxLayout()
-        refresh = QPushButton(tr("REFRESH MEMORY"))
         edit = QPushButton(tr("EDIT"))
+        self.memory_obsolete_button = QPushButton(tr("MARK OBSOLETE"))
         delete = QPushButton(tr("DELETE"))
-        for button in (refresh, edit, delete):
+        for button in (edit, self.memory_obsolete_button, delete):
             button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
             self._style_page_action(button)
             actions.addWidget(button)
         actions.addStretch(1)
-        refresh.clicked.connect(self._refresh_memory_view)
-        edit.clicked.connect(self._edit_memory_item)
+        edit.clicked.connect(lambda: self._edit_memory_item())
+        self.memory_obsolete_button.clicked.connect(self._toggle_memory_obsolete)
         delete.clicked.connect(self._delete_memory_item)
         page_layout.addLayout(actions)
         self._refresh_memory_view()
@@ -1471,26 +1492,128 @@ class ArqenWindow(QMainWindow):
     def _refresh_memory_view(self) -> None:
         if not hasattr(self, "memory_view_list"):
             return
+        records = MemoryStore().records()
+        proposals = [record for record in records if record.status == "proposed"]
+        kept = [record for record in records if record.status != "proposed"]
+        approved = sum(record.status == "approved" for record in kept)
+        self.memory_summary.setText(tr(
+            "{approved} approved  ·  {proposed} suggested  ·  {obsolete} obsolete",
+            approved=approved, proposed=len(proposals), obsolete=len(kept) - approved,
+        ))
+
+        self._clear_layout(self.memory_proposals_layout)
+        self.memory_proposals_heading.setVisible(bool(proposals))
+        self.memory_proposals_host.setVisible(bool(proposals))
+        for record in proposals:
+            self.memory_proposals_layout.addWidget(self._memory_proposal_card(record))
+
+        selected = self._selected_memory()
         self.memory_view_list.clear()
-        for record in MemoryStore().records():
-            item = QListWidgetItem(
-                f"[{record.status} · {record.confidence:.2f}] {record.content}"
-            )
+        # Active memories first; obsolete ones stay visible, dimmed, so they can be restored.
+        for record in sorted(kept, key=lambda item: item.status == "obsolete"):
+            obsolete = record.status == "obsolete"
+            text = f"{record.content}   ({tr('obsolete')})" if obsolete else record.content
+            item = QListWidgetItem(text)
             item.setData(Qt.ItemDataRole.UserRole, record.content)
+            item.setForeground(QColor("#657078" if obsolete else "#dbe2df"))
             self.memory_view_list.addItem(item)
+            if record.content == selected:
+                self.memory_view_list.setCurrentItem(item)
+        if not kept:
+            empty = QListWidgetItem(tr("Nothing approved yet. Say \"kom ihåg att ...\" or approve a suggestion."))
+            empty.setFlags(Qt.ItemFlag.NoItemFlags)
+            empty.setForeground(QColor("#8d969d"))
+            self.memory_view_list.addItem(empty)
+        self._update_memory_actions()
+        self._refresh_memory_badge(len(proposals))
+
+    def _memory_proposal_card(self, record) -> QFrame:
+        card = QFrame(objectName="memoryProposal")
+        card.setStyleSheet(
+            "QFrame#memoryProposal { background: #171d21; border: 1px solid #6b7a2a; border-radius: 8px; }"
+        )
+        row = QHBoxLayout(card)
+        row.setContentsMargins(12, 8, 10, 8)
+        row.setSpacing(8)
+        text = QVBoxLayout()
+        text.setSpacing(2)
+        content = QLabel(record.content)
+        content.setWordWrap(True)
+        content.setStyleSheet("color: #f2f0eb; font-size: 12px;")
+        text.addWidget(content)
+        origin = QLabel(tr("Suggested by Arqen") if record.source == "arqen" else tr("Suggested"))
+        origin.setStyleSheet("color: #8d969d; font-size: 10px;")
+        text.addWidget(origin)
+        row.addLayout(text, 1)
+        approve = QPushButton(tr("APPROVE"))
+        edit = QPushButton(tr("EDIT"))
+        reject = QPushButton(tr("REJECT"))
+        self._style_page_action(approve, primary=True)
+        self._style_page_action(edit)
+        self._style_page_action(reject)
+        approve.clicked.connect(lambda _, fact=record.content: self._approve_memory(fact))
+        edit.clicked.connect(lambda _, fact=record.content: self._edit_memory_text(fact))
+        reject.clicked.connect(lambda _, fact=record.content: self._reject_memory(fact))
+        for button in (approve, edit, reject):
+            row.addWidget(button)
+        return card
+
+    def _refresh_memory_badge(self, proposals: int | None = None) -> None:
+        """Show on the menu how many memory suggestions wait for a decision."""
+        button = getattr(self, "navigation_buttons", {}).get("Memory")
+        if button is None:
+            return
+        if proposals is None:
+            proposals = sum(record.status == "proposed" for record in MemoryStore().records())
+        label = f"{self._navigation_icons.get('Memory', '')}  {tr('Memory')}"
+        button.setText(f"{label}  · {proposals}" if proposals else label)
+        # A suggestion made while the view is open should appear without a click.
+        if proposals != getattr(self, "_memory_proposals_seen", proposals) and hasattr(self, "memory_proposals_layout"):
+            self._memory_proposals_seen = proposals
+            self._refresh_memory_view()
+            return
+        self._memory_proposals_seen = proposals
+
+    def _approve_memory(self, fact: str) -> None:
+        MemoryStore().update(fact, fact, status="approved", confidence=1.0)
+        self._refresh_memory_view()
+
+    def _reject_memory(self, fact: str) -> None:
+        MemoryStore().forget(fact)
+        self._refresh_memory_view()
+
+    def _edit_memory_text(self, old_fact: str) -> None:
+        new_fact, accepted = QInputDialog.getMultiLineText(self, tr("Edit memory"), tr("Memory:"), old_fact)
+        if accepted and new_fact.strip():
+            MemoryStore().update(old_fact, " ".join(new_fact.split()))
+            self._refresh_memory_view()
 
     def _selected_memory(self):
         item = self.memory_view_list.currentItem()
         return item.data(Qt.ItemDataRole.UserRole) if item else None
 
+    def _selected_memory_record(self):
+        fact = self._selected_memory()
+        return next((record for record in MemoryStore().records() if record.content == fact), None) if fact else None
+
+    def _update_memory_actions(self) -> None:
+        record = self._selected_memory_record()
+        obsolete = record is not None and record.status == "obsolete"
+        self.memory_obsolete_button.setText(tr("RESTORE") if obsolete else tr("MARK OBSOLETE"))
+        self.memory_obsolete_button.setEnabled(record is not None)
+
+    def _toggle_memory_obsolete(self) -> None:
+        record = self._selected_memory_record()
+        if record is None:
+            return
+        status = "approved" if record.status == "obsolete" else "obsolete"
+        MemoryStore().update(record.content, record.content, status=status)
+        self._refresh_memory_view()
+
     def _edit_memory_item(self, item=None) -> None:
         old_fact = item.data(Qt.ItemDataRole.UserRole) if item else self._selected_memory()
-        if not old_fact:
-            return
-        new_fact, accepted = QInputDialog.getMultiLineText(self, tr("Edit memory"), tr("Memory:"), old_fact)
-        if accepted and new_fact.strip():
-            MemoryStore().update(old_fact, new_fact)
-            self._refresh_memory_view()
+        if old_fact:
+            self._edit_memory_text(old_fact)
 
     def _delete_memory_item(self) -> None:
         fact = self._selected_memory()
@@ -1527,6 +1650,9 @@ class ArqenWindow(QMainWindow):
 
     def _add_navigation_button(self, layout: QVBoxLayout, label: str, icon: str) -> None:
         button = QPushButton(f"{icon}  {tr(label)}")
+        if not hasattr(self, "_navigation_icons"):
+            self._navigation_icons: dict[str, str] = {}
+        self._navigation_icons[label] = icon
         button.setObjectName("navButton")
         button.setCursor(Qt.CursorShape.PointingHandCursor)
         button.clicked.connect(lambda _, name=label: self._select_navigation(name))
@@ -1598,6 +1724,7 @@ class ArqenWindow(QMainWindow):
         self.mission_activity_timer.timeout.connect(self.refresh_mission_tasks)
         self.mission_activity_timer.timeout.connect(self.refresh_mission_approvals)
         self.mission_activity_timer.timeout.connect(self._refresh_approval_bar)
+        self.mission_activity_timer.timeout.connect(lambda: self._refresh_memory_badge())
         self.mission_activity_timer.start()
         panel_layout.addWidget(QLabel(tr("SCHEDULES")))
         legacy_schedules = QListWidget()

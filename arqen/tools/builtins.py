@@ -32,6 +32,7 @@ from arqen.tools.browser_tools import (
     BrowserClickLinkTool, BrowserBackTool, BrowserForwardTool,
 )
 from arqen.tools.image_generation import GenerateImageTool
+from arqen.tools.memory_tools import ProposeMemoryTool
 
 
 def create_builtin_registry() -> ToolRegistry:
@@ -71,4 +72,5 @@ def create_builtin_registry() -> ToolRegistry:
     registry.register(BrowserBackTool())
     registry.register(BrowserForwardTool())
     registry.register(GenerateImageTool())
+    registry.register(ProposeMemoryTool())
     return registry

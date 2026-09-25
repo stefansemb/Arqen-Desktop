@@ -1,16 +1,21 @@
-# Arqen Desktop – handover
+# Arqen – handover
 
 ## Aktuellt läge
 
-Arqen Desktop är en PyQt6-baserad lokal AI-assistent med mörkgrå/limegrön
-Samidatools-inspirerad design. Kärnan är stabil: molnmodeller streamar, anropar
-verktyg nativt och går att avbryta mitt i.
+Arqen är en PyQt6-baserad lokal AI-assistent och operatörsgränssnitt för agenter,
+med mörkgrå/limegrön design och helt svenskt gränssnitt. Kärnan är stabil:
+molnmodeller streamar, anropar verktyg nativt och går att avbryta mitt i.
 
-Repot ligger på `https://github.com/stefansemb/Arqen-Desktop`, gren `main`.
+Repot ligger på `https://github.com/stefansemb/Arqen-Desktop`, gren `main`, och
+arbetet sker direkt i `main`. Sedan 2026-09-25 är `main` Mission Control-linjen
+(i gränssnittet kallad **Kontrollrum**). Gamla Arqen Desktop är pensionerad och
+utvecklas inte vidare; sista versionen finns kvar som taggen
+`arqen-desktop-legacy`. Mappen `C:\AiProjects\Arqen Desktop` är en separat,
+gammal utcheckning med egen `data/`; en `git pull` där gör den till Kontrollrum.
 
 ## Fungerar
 
-- Chattar sparas, öppnas, döps om och tas bort.
+- Chattar sparas, öppnas, döps om och tas bort från chattlistan i Chatt-vyn.
 - Ollama, OpenRouter, OpenAI, Gemini och Claude stöds.
 - API-nycklar sparas separat per provider. Modeller och providerprofiler sparas.
 - Profiler: Lokal/Ollama, Snabb/OpenRouter, Viktigt/OpenAI, Kreativt/OpenRouter.
@@ -27,9 +32,10 @@ Repot ligger på `https://github.com/stefansemb/Arqen-Desktop`, gren `main`.
   och avslutar med egna ord.
 - Arbetskatalog väljs i inställningarna, fliken Arbetsyta. Tom betyder programmets
   egen mapp. Arqens eget tillstånd följer installationen och påverkas inte.
-- Statistikpanel med tokens och kostnad, flytande som röstpanelen. Kostnaden är
+- Statistikpanel med tokens och kostnad, dockad under röstpanelen. Kostnaden är
   OpenRouters egen siffra ur `usage.cost`, inte en uppskattning.
-- Huvudfönster och båda panelerna öppnas där de stängdes, på rätt skärm.
+- Huvudfönstret öppnas där det stängdes, på rätt skärm. Röst- och
+  statistikpanelen dockas till höger; lossade öppnas de där de senast flöt.
 - System-, fil-, dokument-, webb-, browser- och väderverktyg. Fillistningar visar
   storlek, så "läs den kortaste" inte kräver att varje fil öppnas.
 - Bildgenerering via OpenRouter med Nano Banana 2 och Seedream 4.5 som reserv.
@@ -38,20 +44,22 @@ Repot ligger på `https://github.com/stefansemb/Arqen-Desktop`, gren `main`.
 
 ## Viktiga nästa åtgärder
 
-1. **`FallbackProvider` saknar `supports_tools` och `respond_stream`**
-   (`arqen/providers/factory.py`). Slås fallback på tappas både streaming och
-   nativa verktygsanrop tyst, utan att något syns i gränssnittet. Dess
-   standardtimeout på 10 s ligger dessutom långt under verkliga turer — en
-   uppmätt MiMo-tur tog 58 s. Måste åtgärdas **innan** fallback slås på igen.
-2. Verktygsschemana kostar cirka 2 500 tokens per anrop, eftersom alla 35
-   skickas varje gång. Vid långa verktygskedjor dominerar det kostnaden.
-   Ett urval per tur vore nästa optimering.
+1. **Profilval i Inställningar sätter reservens timeout till 10 s**
+   (`apply_provider_profile` i `arqen/ui/window.py`). `FallbackProvider` har
+   numera `supports_tools`, `respond_stream` och 90 s som standard, men väljer
+   man en profil skrivs 10 s in igen — långt under verkliga turer (en uppmätt
+   MiMo-tur tog 58 s). Åtgärda innan fallback slås på.
+2. `reflect` i Memory 2.0 och kostnad/nyckelhantering i Tool Gateway återstår,
+   se status under respektive spår nedan.
 
-## Mission Control – aktuellt läge
+Verktygsscheman väljs redan per tur (`build_relevant_tool_schemas`, högst 12 plus
+de som alltid erbjuds), så alla 36 skickas inte längre varje gång.
 
-Mission Control har nu separata vyer för Dashboard, Tasks, Workflows, Schedules,
-Agents och Activity. Dashboard är systemöversikt medan Mission Control är den
-operativa kön. Tasks, workflows, schedules och agentkort använder en mer
+## Kontrollrum (Mission Control) – aktuellt läge
+
+I koden heter delen Mission Control; i gränssnittet visas den som Kontrollrum.
+Den har separata vyer för Översikt, Uppgifter, Arbetsflöden, Scheman, Agenter och
+Aktivitet. Översikt är systemöversikt medan Kontrollrum är den operativa kön. Tasks, workflows, schedules och agentkort använder en mer
 kortbaserad och lättläst layout. Activity visar senaste händelsen per task och
 task-resultat kan öppnas i ett större Markdown-renderat resultatfönster.
 
@@ -104,8 +112,14 @@ att införa en tung extern databas direkt.
   matchas via prefix) och modellen får veta att det är ett urval. Minnesdelen
   av systemmeddelandet byts ut per tur, så det förblir ett enda.
 - Klart: bara godkända minnen presenteras som "User-approved memory".
-- Delvis: Memory-vyn kan redigera och ta bort, men inte ändra status.
-- Kvar: flöde där Arqen *föreslår* minnen som användaren godkänner.
+- Klart: Arqen föreslår minnen med verktyget `propose_memory`
+  (`arqen/tools/memory_tools.py`). Det sparar med status "proposed", avvisar
+  sådant som ser ut som lösenord eller nycklar, och erbjuds modellen i varje
+  tur (`Tool.always_offered`) eftersom ordmatchningen annars aldrig väljer det.
+  "Kom ihåg att …" sparar fortfarande direkt som godkänt.
+- Klart: Minne-vyn visar förslag överst med Godkänn/Redigera/Avvisa, godkända
+  minnen under, och kan markera föråldrad/återställa. Menyn visar antalet
+  förslag ("Minne · 2").
 - Kvar: `reflect` räknar bara status; den sammanfattar inga lärdomar än.
 - Kvar vid behov: bättre matchning än ord (t.ex. embeddings) om minnet växer
   sig stort.
@@ -143,7 +157,7 @@ ger säkerhets-, kostnads- och integrationsgrund för framtida agentfunktioner.
 
 ## Teststatus
 
-125 tester, alla gröna. Kör efter ändringar:
+130 tester, alla gröna. Kör efter ändringar:
 
 ```powershell
 python -m compileall -q arqen
@@ -213,7 +227,7 @@ mobilklient.
 
 ## Inspirationskälla
 
-Arqen Desktop tar funktioner och idéer som inspiration från:
+Arqen tar funktioner och idéer som inspiration från:
 
 `C:\AiProjects\SAMIDA AI Desktop Assistent\Brahma-Echo-main`
 

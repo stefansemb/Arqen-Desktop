@@ -18,6 +18,7 @@ CATEGORIES = (
     "Webb",
     "Webbläsare",
     "Röst & bild",
+    "Minne",
     "Övrigt",
 )
 
@@ -65,6 +66,7 @@ _TOOLS: dict[str, ToolInfo] = {
     "speak_text": ToolInfo("Röst & bild", "Läs upp", "Läser upp text med rösten."),
     "stop_speech": ToolInfo("Röst & bild", "Stoppa uppläsning", "Avbryter pågående uppläsning."),
     "generate_image": ToolInfo("Röst & bild", "Skapa bild", "Genererar en bild via OpenRouter. Kostar pengar."),
+    "propose_memory": ToolInfo("Minne", "Föreslå minne", "Föreslår något att minnas. Du godkänner det under Minne."),
 }
 
 
