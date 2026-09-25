@@ -58,7 +58,7 @@ _SV: dict[str, str] = {
     "Signed in.": "Inloggad.",
     "Not signed in. Fill in the client and press {button}.": "Inte inloggad. Fyll i klienten och tryck {button}.",
     "The browser opens {name}. Approve the access there; Arqen waits here.":
-        "Webbläsaren öppnar {name}. Godkänn åtkomsten där, så väntar Arqen här.",
+        "Webbläsaren öppnar {name}. Godkänn åtkomsten där och stäng inte den här rutan – Arqen sparar själv när du är inloggad (väntar högst 5 minuter).",
     "Connected. The tools can be used now.": "Ansluten. Verktygen kan användas nu.",
     "Connected, but without access to: {scopes}. Those tools will fail until you sign in again and tick them.":
         "Ansluten, men utan åtkomst till: {scopes}. De verktygen fungerar inte förrän du loggar in igen och kryssar i dem.",

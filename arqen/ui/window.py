@@ -2105,7 +2105,9 @@ class ArqenWindow(QMainWindow):
                 except Exception as exc:
                     sign_in_state["error"] = str(exc)
 
-            sign_in_button.setEnabled(False)
+            # Saving or testing closes or races the wait; the sign-in saves by itself.
+            for button in (sign_in_button, test_button, save_button):
+                button.setEnabled(False)
             result.setStyleSheet("color: #d8ff75;")
             result.setText(tr("The browser opens {name}. Approve the access there; Arqen waits here.", name=connector.name))
             threading.Thread(target=work, daemon=True, name="arqen-sign-in").start()
@@ -2115,7 +2117,8 @@ class ArqenWindow(QMainWindow):
             if not sign_in_state:
                 return
             sign_in_timer.stop()
-            sign_in_button.setEnabled(True)
+            for button in (sign_in_button, test_button, save_button):
+                button.setEnabled(True)
             current = values()
             if "error" in sign_in_state:
                 result.setStyleSheet("color: #ff6b6b;")
