@@ -50,6 +50,7 @@ from dataclasses import replace as replace_dataclass
 import math
 import re
 import threading
+from types import SimpleNamespace
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -71,6 +72,7 @@ from arqen.ui.strings import status_label, tr, tr_status
 from arqen.ui.tool_catalog import CATEGORIES, ToolInfo, tool_info
 from arqen.connectors import GrantState, all_connectors, grant_state, with_connector, without_connector
 from arqen.connectors import store as connector_store
+from arqen.core import chat_tools
 from arqen.connectors.external import EXTERNAL
 from arqen.connectors import mcp as mcp_servers
 from arqen.ui.theme import CyberpunkGreenTheme, VoicePalette, load_voice_palette
@@ -1847,6 +1849,8 @@ class ArqenWindow(QMainWindow):
         selected = self.connections_agent.currentData()
         self.connections_agent.blockSignals(True)
         self.connections_agent.clear()
+        # The chat comes first: it is what the user talks to every day.
+        self.connections_agent.addItem(tr("Arqen (the chat)"), self._CHAT_CHOICE)
         for agent in agents:
             self.connections_agent.addItem(f"{agent.name} — {agent.role}", agent.id)
         index = self.connections_agent.findData(selected)
@@ -1854,9 +1858,15 @@ class ArqenWindow(QMainWindow):
         self.connections_agent.blockSignals(False)
         self._refresh_connection_cards()
 
+    _CHAT_CHOICE = "__chat__"
+
     def _selected_connection_agent(self):
-        store = getattr(self, "mission_store", None)
+        """The chosen agent, or for the chat a stand-in with the chat's current tools."""
         agent_id = self.connections_agent.currentData() if hasattr(self, "connections_agent") else None
+        if agent_id == self._CHAT_CHOICE:
+            return SimpleNamespace(id=self._CHAT_CHOICE, name="Arqen",
+                                   allowed_tools=chat_tools.chat_allowed_tools(self.engine.tools))
+        store = getattr(self, "mission_store", None)
         return store.get_agent(agent_id) if store is not None and agent_id else None
 
     def _refresh_connection_cards(self) -> None:
@@ -2473,6 +2483,13 @@ class ArqenWindow(QMainWindow):
             return
         change = with_connector if grant else without_connector
         tools = change(connector, agent.allowed_tools)
+        if agent.id == self._CHAT_CHOICE:
+            # The chat keeps what it lost, not what it has, so new tools reach it by default.
+            everything = [item["name"] for item in self.engine.tools.describe()]
+            chat_tools.save_denied_tools(name for name in everything if name not in tools)
+            chat_tools.apply_chat_tool_limits(self.engine)
+            self._refresh_connection_cards()
+            return
         # Approval rules only make sense for tools the agent still has.
         approvals = tuple(tool for tool in agent.approval_tools if tool in tools)
         self.mission_store.save_agent(replace_dataclass(agent, allowed_tools=tools, approval_tools=approvals))

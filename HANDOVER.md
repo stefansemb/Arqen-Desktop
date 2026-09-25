@@ -45,9 +45,9 @@ gammal utcheckning med egen `data/`; en `git pull` där gör den till Kontrollru
 
 ## Viktiga nästa åtgärder
 
-1. Tool Gateway, Memory 2.0 och Anslutningar fas 1–3 är klara. Kvar enligt
-   planen: välj "Arqen (chatten)" i agentväljaren, mobilstödet och bättre
-   webbresearch för Scout (se respektive avsnitt).
+1. Tool Gateway, Memory 2.0 och Anslutningar fas 1–3 är klara, liksom
+   "Arqen (chatten)" i agentväljaren. Kvar enligt planen: mobilstödet och
+   bättre webbresearch för Scout (se respektive avsnitt).
 
 Reserven (`FallbackProvider`) har `supports_tools`, `respond_stream` och 90 s
 timeout. Profilval i Inställningar skrev tidigare in 10 s; nu används
@@ -245,8 +245,14 @@ med integrationer som ansluts och delas ut till agenter.
 registret) och vyn *Anslutningar* under System. De inbyggda verktygsgrupperna
 byggs ur kategorierna i `tool_catalog.py`; agentväljaren ger GE TILLGÅNG / GE
 ALLA / TA BORT per kort och sparar i agentens `allowed_tools` (godkänneregler
-för borttagna verktyg rensas). Chatten har fortfarande alla verktyg; att välja
-"Arqen (chatten)" i väljaren återstår. En agents tomma verktygslista betyder nu
+för borttagna verktyg rensas). "Arqen (chatten)" står först i väljaren
+(`arqen/core/chat_tools.py`): chatten sparar vilka verktyg som tagits *bort*
+(`arqen.json` → `chat.denied_tools`), så nya verktyg (anslutningar,
+MCP-servrar) når chatten direkt. Begränsningen läggs bara på chattmotorerna
+(appen, kommandoraden, lokala API:et) via `apply_chat_tool_limits`, som sätter
+gatewayns policy; `build_relevant_tool_schemas(allowed=…)` erbjuder bara det
+policyn tillåter. Uppgiftsmotorer byggs utan den och följer sin agent. En
+ändring i väljaren gäller den öppna chatten direkt. En agents tomma verktygslista betyder nu
 *inga* verktyg (tidigare *alla*), och AKTIVERA/INAKTIVERA behåller agentens
 verktyg (tömde dem tidigare).
 
@@ -284,7 +290,7 @@ Faser:
 
 ## Teststatus
 
-207 tester, alla gröna. Kör efter ändringar:
+212 tester, alla gröna. Kör efter ändringar:
 
 ```powershell
 python -m compileall -q arqen

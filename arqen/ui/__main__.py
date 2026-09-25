@@ -5,6 +5,7 @@ from PyQt6.QtWidgets import QApplication
 
 from arqen.config.settings import load_provider_config, load_workspace_root
 from arqen.core.engine import ConversationEngine
+from arqen.core.chat_tools import apply_chat_tool_limits
 from arqen.providers.factory import create_provider
 from arqen.tools.builtins import create_builtin_registry
 from arqen.ui.window import ArqenWindow
@@ -17,6 +18,7 @@ def main() -> None:
         provider=create_provider(config),
         tools=create_builtin_registry(),
     )
+    apply_chat_tool_limits(engine)
     app = QApplication(sys.argv)
     window = ArqenWindow(engine, provider_label=config.name, profile_name=config.profile_name)
     window.show()

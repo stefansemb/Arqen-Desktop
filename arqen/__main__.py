@@ -1,4 +1,5 @@
 from .core.engine import ConversationEngine
+from .core.chat_tools import apply_chat_tool_limits
 from .config.settings import load_provider_config, load_workspace_root
 from .providers.factory import create_provider
 from .tools.builtins import create_builtin_registry
@@ -16,6 +17,7 @@ def main() -> None:
         provider=provider,
         tools=create_builtin_registry(),
     )
+    apply_chat_tool_limits(engine)
     print(f"Provider: {config.name} ({config.model})")
     print("Arqen Desktop demo. Skriv 'quit' för att avsluta.")
     while True:

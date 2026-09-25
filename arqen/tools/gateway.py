@@ -68,12 +68,16 @@ class ToolGateway:
             return "unknown"
         return "high" if tool.requires_confirmation else "low"
 
+    def permits(self, tool_name: str, agent: str = "default") -> bool:
+        """Whether ``agent``'s policy lets ``tool_name`` run."""
+        policy = self.policies.get(agent, ToolPolicy())
+        if tool_name in policy.denied_tools:
+            return False
+        return policy.allowed_tools is None or tool_name in policy.allowed_tools
+
     def execute(self, tool_name: str, arguments: dict[str, Any] | None = None,
                 *, user: str = "local", agent: str = "default") -> ExecutionResult:
-        policy = self.policies.get(agent, ToolPolicy())
-        denied = tool_name in policy.denied_tools
-        if policy.allowed_tools is not None and tool_name not in policy.allowed_tools:
-            denied = True
+        denied = not self.permits(tool_name, agent)
         costs: list[float] = []
         if denied:
             result = ExecutionResult(False, f"Tool denied by policy: {tool_name}")

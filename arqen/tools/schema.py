@@ -6,7 +6,7 @@ calling convention from the system prompt.
 """
 
 import re
-from typing import Any, Iterable
+from typing import Any, Collection, Iterable
 
 from arqen.tools.registry import ToolRegistry
 
@@ -71,6 +71,7 @@ def build_relevant_tool_schemas(
     already_used: Iterable[str] = (),
     limit: int = 12,
     focus: str = "",
+    allowed: Collection[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Select a conservative subset of schemas for a long tool catalogue.
 
@@ -81,12 +82,15 @@ def build_relevant_tool_schemas(
     mentions cannot crowd out "telegram", and a word in a tool's own name
     counts most.  If no useful signal is found, the complete catalogue is
     retained rather than risking a missing capability.  Tools already used
-    during this turn are always retained.
+    during this turn are always retained.  ``allowed`` limits the choice to
+    the tools this engine may use at all, e.g. the chat's own selection.
     """
     entries = [entry for entry in registry.describe()
-               if (tool := registry.get(entry["name"])) is None or tool.available()]
+               if ((tool := registry.get(entry["name"])) is None or tool.available())
+               and (allowed is None or entry["name"] in allowed)]
+    everything = None if allowed is None else [entry["name"] for entry in entries]
     if len(entries) <= limit:
-        return build_tool_schemas(registry)
+        return build_tool_schemas(registry, everything)
 
     searchable = {
         entry["name"]: " ".join((entry["name"], entry["description"], *entry["arguments"])).casefold()
@@ -119,7 +123,7 @@ def build_relevant_tool_schemas(
 
     matches = [entry for value, entry in ranked if value > 0]
     if not matches:
-        return build_tool_schemas(registry)
+        return build_tool_schemas(registry, everything)
     selected = [entry["name"] for _, entry in sorted(ranked, key=lambda item: item[0], reverse=True)[:limit]]
     selected.extend(used)
     # Some tools answer to what the user says about themselves rather than to

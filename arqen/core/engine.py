@@ -193,6 +193,8 @@ class ConversationEngine:
             # about what this turn needs.
             "\n".join(message.content for message in self.messages if message.role != "system"),
             focus=prompt,
+            # A tool the policy would refuse is not offered either.
+            allowed=[item["name"] for item in self.tools.describe() if self.gateway.permits(item["name"])],
             already_used=(message.tool_calls[0].get("function", {}).get("name", "")
                           for message in self.messages
                           if message.role == "assistant" and message.tool_calls),
