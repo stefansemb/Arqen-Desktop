@@ -105,7 +105,7 @@ class ArqenRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.OK, {"data": [self._as_json(item) for item in schedules]})
                 return
             if path == "/api/v1/mission/workflows":
-                workflows = self.mission_store.list_workflows()
+                workflows = self.server.mission_store.list_workflows()
                 self._send_json(HTTPStatus.OK, {"data": [self._as_json(item) for item in workflows]})
                 return
             if path.startswith("/api/v1/mission/workflows/") and path.endswith("/runs"):
@@ -113,9 +113,9 @@ class ArqenRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.OK, {"data": [self._as_json(item) for item in self.server.mission_store.list_workflow_runs(workflow_id)]})
                 return
             if path.startswith("/api/v1/mission/runs/") and path.endswith("/resume"):
-                run_id = path.removeprefix("/api/v1/mission/runs/").removesuffix("/resume").strip("/")
-                results = self.workflow_runner.resume(run_id)
-                self._send_json(HTTPStatus.OK, {"data": {"run_id": run_id, "results": results}})
+                # Resuming starts work, so it must not happen on a read: a
+                # link, a prefetch or a crawler could otherwise trigger it.
+                self._error(HTTPStatus.METHOD_NOT_ALLOWED, "method_not_allowed", "Använd POST för att återuppta en körning.")
                 return
             if path.startswith("/api/v1/mission/tasks/"):
                 task_id = path.removeprefix("/api/v1/mission/tasks/").strip("/")
@@ -200,24 +200,38 @@ class ArqenRequestHandler(BaseHTTPRequestHandler):
                 if any(not step.name or not step.prompt for step in steps):
                     raise ValueError("Varje steg måste ha name och prompt.")
                 workflow = Workflow(uuid.uuid4().hex, name, steps)
-                self.mission_store.save_workflow(workflow)
+                self.server.mission_store.save_workflow(workflow)
                 self._send_json(HTTPStatus.CREATED, {"data": self._as_json(workflow)})
                 return
             if path.startswith("/api/v1/mission/workflows/") and path.endswith("/run"):
                 workflow_id = path.removeprefix("/api/v1/mission/workflows/").removesuffix("/run").strip("/")
-                workflow = next((item for item in self.mission_store.list_workflows() if item.id == workflow_id), None)
+                workflow = next((item for item in self.server.mission_store.list_workflows() if item.id == workflow_id), None)
                 if workflow is None:
                     raise FileNotFoundError(workflow_id)
-                results = self.workflow_runner.run(workflow.name, list(workflow.steps), workflow.id)
+                results = self.server.workflow_runner.run(workflow.name, list(workflow.steps), workflow.id)
                 self._send_json(HTTPStatus.OK, {"data": {"workflow_id": workflow.id, "results": results}})
                 return
             if path.startswith("/api/v1/mission/approvals/") and path.endswith("/decision"):
                 approval_id = path.removeprefix("/api/v1/mission/approvals/").removesuffix("/decision").strip("/")
-                self.server.mission_store.decide_approval(approval_id, str(payload.get("status", "")))
-                approval = self.server.mission_store.get_approval(approval_id)
+                store = self.server.mission_store
+                store.decide_approval(approval_id, str(payload.get("status", "")))
+                approval = store.get_approval(approval_id)
                 if approval is None:
                     raise FileNotFoundError(approval_id)
-                self._send_json(HTTPStatus.OK, {"data": self._as_json(approval)})
+                # Resume on both answers, as the desktop app does: a rejection
+                # is what cancels the task, otherwise it waits forever.
+                result = None
+                task = store.get_task(approval.task_id)
+                if task is not None and task.status == "waiting_approval":
+                    result = self.server.mission_runner.resume(approval.task_id)
+                task = store.get_task(approval.task_id)
+                data = {**self._as_json(approval), "task_status": task.status if task else None, "result": result}
+                self._send_json(HTTPStatus.OK, {"data": data})
+                return
+            if path.startswith("/api/v1/mission/runs/") and path.endswith("/resume"):
+                run_id = path.removeprefix("/api/v1/mission/runs/").removesuffix("/resume").strip("/")
+                results = self.server.workflow_runner.resume(run_id)
+                self._send_json(HTTPStatus.OK, {"data": {"run_id": run_id, "results": results}})
                 return
             if path.endswith("/run") and path.startswith("/api/v1/mission/tasks/"):
                 task_id = path.removeprefix("/api/v1/mission/tasks/").removesuffix("/run").strip("/")
@@ -235,7 +249,11 @@ class ArqenRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.OK, {"data": self._as_json(result)})
                 return
             if path == "/api/v1/voice/stop":
-                self._send_json(HTTPStatus.OK, {"data": {"status": "stop_requested"}})
+                # This used to answer without stopping anything.
+                from arqen.tools.speech import stop_speech
+
+                stop_speech()
+                self._send_json(HTTPStatus.OK, {"data": {"status": "stopped"}})
                 return
             self._error(HTTPStatus.NOT_FOUND, "not_found", "Resursen finns inte.")
         except ValueError as exc:

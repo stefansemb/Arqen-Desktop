@@ -89,3 +89,68 @@ def test_api_creates_reads_and_runs_mission_task(tmp_path: Path) -> None:
         server.shutdown()
         server.server_close()
         thread.join(timeout=2)
+
+
+def _with_server(tmp_path: Path, check) -> None:
+    server, thread = make_server(tmp_path)
+    try:
+        check(server)
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
+def test_api_workflow_routes_reach_the_store(tmp_path: Path) -> None:
+    """These routes read attributes the handler does not have and always gave 500."""
+    def check(server):
+        steps = [{"name": "Svara", "prompt": "Hej"}]
+        status, created = request(server, "POST", "/api/v1/mission/workflows", {"name": "Flöde", "steps": steps})
+        assert status == 201
+        status, listed = request(server, "GET", "/api/v1/mission/workflows")
+        assert status == 200 and [item["name"] for item in listed["data"]] == ["Flöde"]
+        status, ran = request(server, "POST", f"/api/v1/mission/workflows/{created['data']['id']}/run", {})
+        assert status == 200 and ran["data"]["results"]
+    _with_server(tmp_path, check)
+
+
+def test_api_resuming_a_run_needs_post(tmp_path: Path) -> None:
+    def check(server):
+        status, body = request(server, "GET", "/api/v1/mission/runs/any-run/resume")
+        assert status == 405 and body["error"]["code"] == "method_not_allowed"
+    _with_server(tmp_path, check)
+
+
+def test_api_voice_stop_really_stops(tmp_path: Path, monkeypatch) -> None:
+    import arqen.tools.speech as speech
+
+    calls = []
+    monkeypatch.setattr(speech, "stop_speech", lambda: calls.append("stop"))
+
+    def check(server):
+        status, body = request(server, "POST", "/api/v1/voice/stop", {})
+        assert status == 200 and body["data"]["status"] == "stopped"
+        assert calls == ["stop"]
+    _with_server(tmp_path, check)
+
+
+def test_api_approval_decision_moves_the_task_on(tmp_path: Path) -> None:
+    from arqen.mission import Task
+
+    def waiting_task(server, title: str) -> str:
+        task = Task.create(title, title)
+        server.mission_store.save_task(task)
+        server.mission_store.update_task(task.id, "running")
+        approval = server.mission_runner.request_approval(task.id, "write_workspace_file", {"path": "x.md"})
+        return approval.id
+
+    def check(server):
+        rejected = waiting_task(server, "Avvisas")
+        status, body = request(server, "POST", f"/api/v1/mission/approvals/{rejected}/decision", {"status": "rejected"})
+        assert status == 200 and body["data"]["task_status"] == "cancelled"
+
+        approved = waiting_task(server, "Godkänns")
+        status, body = request(server, "POST", f"/api/v1/mission/approvals/{approved}/decision", {"status": "approved"})
+        assert status == 200 and body["data"]["task_status"] == "completed"
+        assert body["data"]["result"] == "Jag tog emot: Godkänns"
+    _with_server(tmp_path, check)

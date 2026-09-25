@@ -45,8 +45,47 @@ Bas: `/api/v1`
 | GET | `/tools/policies` | Aktiva agentpolicies |
 | GET | `/tools/audit` | Senaste auditposter |
 
-Mission Control- och Tool Gateway-endpoints ovan är implementerade i den lokala
-API-servern. Muterande mobilflöden och approval-hantering för klienter återstår.
+## Implementerat läge (2026-09-25)
+
+Alla endpoints i tabellen ovan finns i `arqen/api/server.py`, plus:
+
+| Metod | Endpoint | Syfte |
+|---|---|---|
+| GET | `/control/status` | Server- och systemstatus för kontrollsidan (disk, minne) |
+| GET | `/mission/tasks/{id}` | En task med dess händelser |
+| GET | `/mission/workflows/{id}/runs` | Körningar av ett arbetsflöde |
+| POST | `/mission/tasks` | Skapa en task |
+| POST | `/mission/tasks/{id}/run` | Köra en task |
+| POST | `/mission/tasks/{id}/resume` | Återuppta en task efter approval |
+| POST | `/mission/agents` | Skapa eller uppdatera en agent |
+| POST | `/mission/approvals` | Begära en approval |
+| POST | `/mission/approvals/{id}/decision` | Godkänna eller avslå |
+| POST | `/mission/schedules` | Skapa ett schema |
+| POST | `/mission/workflows` | Skapa ett arbetsflöde |
+| POST | `/mission/workflows/{id}/run` | Köra ett arbetsflöde |
+| POST | `/mission/runs/{id}/resume` | Återuppta en körning som väntat på approval |
+
+Servern visar också två enkla sidor: `/` (mobil) och `/control`.
+
+Rättat 2026-09-25:
+
+- `POST /voice/stop` stoppar nu uppläsningen; tidigare svarade den utan att
+  göra något.
+- `POST /mission/approvals/{id}/decision` återupptar tasken efter beslutet, som
+  desktop-appen: ett avslag avbryter den, ett godkännande kör klart den. Svaret
+  innehåller `task_status` och `result`.
+- Att återuppta en körning kräver `POST /mission/runs/{id}/resume`; en GET ger
+  405, så en länk eller förhämtning inte kan starta arbete.
+- Arbetsflödesrutterna (lista, skapa, köra, återuppta) gav alltid 500 eftersom
+  de läste attribut som bara finns på servern. De fungerar nu.
+
+Kvar att göra:
+
+- API:t kräver bara token om en är satt (`--token` eller `ARQEN_API_TOKEN`);
+  standard är ingen token.
+- Bekräftelseflödet för verktyg via klienten och själva mobilklienten återstår.
+- API-servern kör en egen scheduler och task-worker mot samma databas som
+  desktop-appen; tasks claimas så att samma task inte körs två gånger.
 
 ## Exempel: skicka meddelande
 
