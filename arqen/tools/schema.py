@@ -36,23 +36,26 @@ def build_tool_schemas(registry: ToolRegistry, names: Iterable[str] | None = Non
         implementation = registry.get(tool["name"])
         if implementation is not None and not implementation.available():
             continue
-        properties = {
-            name: {"type": _json_type(kind)}
-            for name, kind in _argument_types(registry, tool["name"]).items()
-        }
         description = tool["description"]
         if tool["requires_confirmation"]:
             description += " (requires user confirmation before it runs)"
+        # MCP tools bring their own JSON schema; built-in tools are described
+        # by their simple argument types.
+        own_schema = getattr(implementation, "json_schema", None)
+        if isinstance(own_schema, dict):
+            parameters = {"type": "object", "properties": {}, **own_schema}
+        else:
+            properties = {
+                name: {"type": _json_type(kind)}
+                for name, kind in _argument_types(registry, tool["name"]).items()
+            }
+            parameters = {"type": "object", "properties": properties, "required": list(properties)}
         schemas.append({
             "type": "function",
             "function": {
                 "name": tool["name"],
                 "description": description,
-                "parameters": {
-                    "type": "object",
-                    "properties": properties,
-                    "required": list(properties),
-                },
+                "parameters": parameters,
             },
         })
     return schemas

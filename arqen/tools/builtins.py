@@ -86,4 +86,8 @@ def create_builtin_registry() -> ToolRegistry:
     registry.register(GitHubCreateIssueTool())
     registry.register(DiscordSendMessageTool())
     registry.register(TelegramSendMessageTool())
+    # MCP servers the user added; their tool lists are cached in the config.
+    from arqen.connectors.mcp import sync_mcp_tools
+
+    sync_mcp_tools(registry)
     return registry

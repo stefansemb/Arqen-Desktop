@@ -47,5 +47,6 @@ def builtin_connectors(tools: ToolRegistry) -> list[Connector]:
 def all_connectors(tools: ToolRegistry) -> list[Connector]:
     """Every connector Arqen knows about, built-in first."""
     from arqen.connectors.external import EXTERNAL
+    from arqen.connectors.mcp import mcp_connectors
 
-    return builtin_connectors(tools) + list(EXTERNAL)
+    return builtin_connectors(tools) + list(EXTERNAL) + mcp_connectors()

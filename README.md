@@ -58,6 +58,9 @@ inte går att ångra kräver ditt godkännande.
   issue kräver godkännande.
 - **Discord** (webhook) och **Telegram** (bot): skicka meddelanden med
   godkännande, och valfria aviseringar när uppgifter blir klara eller misslyckas.
+- **MCP-servrar**: lägg till en adress (t.ex. Zapiers MCP-URL) eller ett lokalt
+  program; serverns verktyg blir Arqen-verktyg. De kräver godkännande om servern
+  inte märker dem som endast läsande.
 - Nycklar sparas i `config/arqen-secrets.json`, läses först när ett verktyg körs
   och rensas bort ur allt verktygen svarar.
 

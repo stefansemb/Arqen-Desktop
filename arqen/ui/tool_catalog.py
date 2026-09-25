@@ -21,6 +21,7 @@ CATEGORIES = (
     "Minne",
     "Utveckling",
     "Meddelanden",
+    "MCP",
     "Övrigt",
 )
 
@@ -81,4 +82,11 @@ _TOOLS: dict[str, ToolInfo] = {
 
 def tool_info(name: str, model_description: str = "") -> ToolInfo:
     """The display info for ``name``, falling back to its model description."""
-    return _TOOLS.get(name) or ToolInfo("Övrigt", name, model_description)
+    if name in _TOOLS:
+        return _TOOLS[name]
+    if name.startswith("mcp_"):
+        # MCP tools come from the user's servers; show the server's own name.
+        from arqen.connectors.mcp import display_title
+
+        return ToolInfo("MCP", display_title(name) or name, model_description)
+    return ToolInfo("Övrigt", name, model_description)

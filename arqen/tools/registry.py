@@ -35,10 +35,17 @@ class ToolRegistry:
         for tool in self._tools.values():
             if not tool.available():
                 continue
-            arguments = ", ".join(
-                f"{name}: {kind.__name__}"
-                for name, kind in tool.arguments_schema.items()
-            ) or "none"
+            own_schema = getattr(tool, "json_schema", None)
+            if isinstance(own_schema, dict):
+                arguments = ", ".join(
+                    f"{name}: {spec.get('type', 'any') if isinstance(spec, dict) else 'any'}"
+                    for name, spec in (own_schema.get("properties") or {}).items()
+                ) or "none"
+            else:
+                arguments = ", ".join(
+                    f"{name}: {kind.__name__}"
+                    for name, kind in tool.arguments_schema.items()
+                ) or "none"
             confirmation = "confirmation required" if tool.requires_confirmation else "read-only"
             lines.append(f"- {tool.name} ({confirmation}): {tool.description}; arguments: {arguments}")
         return "\n".join(lines)

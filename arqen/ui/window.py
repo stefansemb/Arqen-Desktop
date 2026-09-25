@@ -72,6 +72,7 @@ from arqen.ui.tool_catalog import CATEGORIES, ToolInfo, tool_info
 from arqen.connectors import GrantState, all_connectors, grant_state, with_connector, without_connector
 from arqen.connectors import store as connector_store
 from arqen.connectors.external import EXTERNAL
+from arqen.connectors import mcp as mcp_servers
 from arqen.ui.theme import CyberpunkGreenTheme, VoicePalette, load_voice_palette
 from arqen.core.provider_metrics import ProviderMetrics
 from arqen.core.memory_store import MemoryStore
@@ -1808,6 +1809,11 @@ class ArqenWindow(QMainWindow):
         self.connections_search.setFixedWidth(260)
         self.connections_search.textChanged.connect(lambda _: self._refresh_connection_cards())
         controls.addWidget(self.connections_search)
+        add_mcp = QPushButton(tr("+ MCP SERVER"))
+        add_mcp.setToolTip(tr("Connect an MCP server: its tools become Arqen tools."))
+        self._style_page_action(add_mcp, primary=True)
+        add_mcp.clicked.connect(lambda: self._open_mcp_dialog(None))
+        controls.addWidget(add_mcp)
         layout.addLayout(controls)
         self.connections_summary = QLabel("")
         self.connections_summary.setStyleSheet("color: #9fce20; font-size: 11px;")
@@ -1919,14 +1925,20 @@ class ArqenWindow(QMainWindow):
         if not connector.builtin:
             manage = QPushButton(tr("MANAGE") if connector.is_connected() else tr("+ CONNECT"))
             self._style_page_action(manage, primary=not connector.is_connected())
-            manage.clicked.connect(lambda _, item=connector: self._open_connector_dialog(item))
+            if connector.auth == "mcp":
+                manage.clicked.connect(lambda _, cid=connector.id: self._open_mcp_dialog(cid))
+            else:
+                manage.clicked.connect(lambda _, item=connector: self._open_connector_dialog(item))
             card_layout.addWidget(manage, alignment=Qt.AlignmentFlag.AlignLeft)
 
         description = QLabel(connector.description)
         description.setWordWrap(True)
         description.setStyleSheet("color: #c4cec9; font-size: 11px;")
         card_layout.addWidget(description)
-        tools = QLabel(" · ".join(tool_info(tool).title for tool in connector.tools))
+        titles = [tool_info(tool).title for tool in connector.tools]
+        # An MCP server can bring hundreds of tools; the card shows the first few.
+        shown_titles = " · ".join(titles[:10]) + (f" · +{len(titles) - 10}" if len(titles) > 10 else "")
+        tools = QLabel(shown_titles or tr("No tools fetched yet."))
         tools.setWordWrap(True)
         tools.setStyleSheet("color: #657078; font-size: 10px;")
         card_layout.addWidget(tools)
@@ -2059,6 +2071,159 @@ class ArqenWindow(QMainWindow):
             button.setAutoDefault(False)
         dialog.exec()
         self._refresh_connection_cards()
+        if hasattr(self, "tools_stack"):
+            self._refresh_tools_view()
+
+    def _open_mcp_dialog(self, connector_id: str | None) -> None:
+        servers = mcp_servers.load_servers()
+        server = next((item for item in servers if mcp_servers.connector_id(item) == connector_id), None)
+        dialog = QDialog(self)
+        dialog.setWindowTitle(tr("MCP server") if server is None else tr("{name} – connection", name=server.get("name", "")))
+        dialog.setMinimumWidth(560)
+        layout = QVBoxLayout(dialog)
+        intro = QLabel(tr("An MCP server gives Arqen more tools. Its tools ask for approval unless the server marks them as read-only."))
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+        form = QFormLayout()
+        name = QLineEdit(str((server or {}).get("name", "")))
+        name.setPlaceholderText(tr("e.g. Zapier"))
+        form.addRow(tr("Name"), name)
+        transport = QComboBox()
+        transport.addItem(tr("Address (HTTP)"), "http")
+        transport.addItem(tr("Local program"), "stdio")
+        transport.setCurrentIndex(max(0, transport.findData((server or {}).get("transport", "http"))))
+        form.addRow(tr("Type"), transport)
+        url = QLineEdit(str((server or {}).get("url", "")))
+        url.setPlaceholderText("https://…/mcp")
+        form.addRow(tr("Address"), url)
+        token = QLineEdit(mcp_servers.server_token(server) if server else "")
+        token.setEchoMode(QLineEdit.EchoMode.Password)
+        token.setPlaceholderText(tr("Only if the server asks for one"))
+        form.addRow(tr("Token (optional)"), token)
+        command = QLineEdit(str((server or {}).get("command", "")))
+        command.setPlaceholderText("npx")
+        form.addRow(tr("Program"), command)
+        args = QLineEdit(str((server or {}).get("args", "")))
+        args.setPlaceholderText("-y @modelcontextprotocol/server-everything")
+        form.addRow(tr("Arguments"), args)
+        layout.addLayout(form)
+        warning = QLabel(tr("A local program runs on this computer with your permissions. Only add programs you trust."))
+        warning.setWordWrap(True)
+        warning.setStyleSheet("color: #ffd166; font-size: 11px;")
+        layout.addWidget(warning)
+        paused = QCheckBox(tr("Pause the connection (agents cannot use it)"))
+        if server is not None:
+            paused.setChecked(bool(connector_store.load_settings(mcp_servers.connector_id(server)).get("paused", False)))
+            layout.addWidget(paused)
+        result = QLabel("")
+        result.setWordWrap(True)
+        layout.addWidget(result)
+        fetched: dict[str, list] = {}
+
+        def update_fields() -> None:
+            local = transport.currentData() == "stdio"
+            for widget in (url, token):
+                widget.setEnabled(not local)
+            for widget in (command, args):
+                widget.setEnabled(local)
+            warning.setVisible(local)
+
+        transport.currentIndexChanged.connect(lambda _: update_fields())
+        update_fields()
+
+        def draft() -> dict:
+            base = dict(server or {})
+            base.update({
+                "name": name.text().strip(), "transport": transport.currentData(),
+                "url": url.text().strip(), "command": command.text().strip(), "args": args.text().strip(),
+            })
+            base.setdefault("id", "draft")
+            return base
+
+        def fetch() -> bool:
+            current = draft()
+            if not current["name"] or not (current["url"] if current["transport"] == "http" else current["command"]):
+                result.setStyleSheet("color: #ffd166;")
+                result.setText(tr("Fill in a name and an address or program first."))
+                return False
+            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+            try:
+                specs = mcp_servers.fetch_tools(current, token.text().strip())
+                fetched["tools"] = [spec.to_json() for spec in specs]
+                read_only = sum(spec.read_only for spec in specs)
+                result.setStyleSheet("color: #b7ff18;")
+                result.setText(tr("Works: {count} tools ({read_only} read-only).", count=len(specs), read_only=read_only))
+                return True
+            except Exception as exc:
+                result.setStyleSheet("color: #ff6b6b;")
+                result.setText(tr("Did not work: {error}", error=self._scrub(str(exc), {"token": token.text()})))
+                return False
+            finally:
+                QApplication.restoreOverrideCursor()
+
+        def save() -> None:
+            if "tools" not in fetched and not fetch():
+                return
+            current = draft()
+            others = [item for item in servers if server is None or item["id"] != server["id"]]
+            if server is None:
+                current["id"] = mcp_servers.server_id(current["name"], {item["id"] for item in servers})
+            current["tools"] = fetched["tools"]
+            mcp_servers.save_servers(others + [current])
+            cid = mcp_servers.connector_id(current)
+            if current["transport"] == "http" and token.text().strip():
+                connector_store.save_credentials(cid, {"token": token.text().strip()})
+            else:
+                connector_store.forget_credentials(cid)
+            connector_store.save_settings(cid, paused=paused.isChecked())
+            dialog.accept()
+
+        def remove() -> None:
+            answer = QMessageBox.question(
+                dialog, tr("Remove server"), tr("Remove {name} and its tools from Arqen?", name=server.get("name", "")),
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+            mcp_servers.save_servers([item for item in servers if item["id"] != server["id"]])
+            cid = mcp_servers.connector_id(server)
+            connector_store.forget_credentials(cid)
+            # Agents keep no stale names of tools that no longer exist.
+            prefix = mcp_servers.tool_name(server, "")
+            for agent in self.mission_store.list_agents():
+                kept = tuple(tool for tool in agent.allowed_tools if not tool.startswith(prefix))
+                if kept != agent.allowed_tools:
+                    approvals = tuple(tool for tool in agent.approval_tools if tool in kept)
+                    self.mission_store.save_agent(replace_dataclass(agent, allowed_tools=kept, approval_tools=approvals))
+            dialog.accept()
+
+        buttons = QHBoxLayout()
+        test_button = QPushButton(tr("TEST AND FETCH TOOLS"))
+        save_button = QPushButton(tr("SAVE"))
+        self._style_page_action(test_button)
+        self._style_page_action(save_button, primary=True)
+        test_button.clicked.connect(fetch)
+        save_button.clicked.connect(save)
+        buttons.addWidget(test_button)
+        if server is not None:
+            remove_button = QPushButton(tr("REMOVE SERVER"))
+            self._style_page_action(remove_button)
+            remove_button.clicked.connect(remove)
+            buttons.addWidget(remove_button)
+        buttons.addStretch(1)
+        close = QPushButton(tr("CLOSE"))
+        self._style_page_action(close)
+        close.clicked.connect(dialog.reject)
+        buttons.addWidget(save_button)
+        buttons.addWidget(close)
+        layout.addLayout(buttons)
+        for button in (test_button, save_button, close):
+            button.setAutoDefault(False)
+        dialog.exec()
+        # New or removed tools reach the chat right away; task engines pick them up on their own.
+        mcp_servers.sync_mcp_tools(self.engine.tools)
+        self._refresh_connection_cards()
+        self.refresh_mission_agents()
         if hasattr(self, "tools_stack"):
             self._refresh_tools_view()
 

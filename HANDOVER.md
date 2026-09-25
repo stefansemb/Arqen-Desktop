@@ -156,9 +156,22 @@ ger säkerhets-, kostnads- och integrationsgrund för framtida agentfunktioner.
 - Kvar: nyckelhantering via gatewayn. Nycklarna ligger i `arqen-secrets.json`
   och läses direkt av providers; gatewayn injicerar inga hemligheter än.
 
-### 3. Anslutningar (verktygsarsenal) – fas 1 och 2 klara
+### 3. Anslutningar (verktygsarsenal) – fas 1, 2 och MCP klara
 
-Beslutad och fas 1–2 byggda 2026-09-25.
+Beslutad och fas 1–2 samt MCP-delen av fas 3 byggda 2026-09-25.
+
+**Status fas 3, MCP:** egen klient utan beroenden (`arqen/connectors/mcp_client.py`)
+för Streamable HTTP (JSON eller SSE, valfri Bearer-token, bara https eller
+localhost) och stdio (lokalt program, JSON-rader; brus på stdout hoppas över).
+Varje anrop öppnar en egen kort session. Servrar läggs till med
++ MCP-SERVER i Anslutningar och sparas i `arqen.json` under `mcp_servers`
+tillsammans med verktygslistan, så appstart aldrig väntar på en server
+(`arqen/connectors/mcp.py`). Verktygen blir `mcp_<server>_<verktyg>` (högst 64
+tecken), bär serverns JSON-schema och kräver godkännande om servern inte märkt
+dem `readOnlyHint`. `sync_mcp_tools` uppdaterar chattens verktyg direkt efter
+ändring; uppgifter får dem via sin egen motor. Att ta bort en server rensar dess
+verktyg ur agenternas listor. Google (fas 3, del 2) är nästa steg: läsa mejl,
+kalender och filer, skapa mejlutkast och kalenderhändelser med godkännande.
 
 **Status fas 2:** GitHub (`arqen/connectors/github.py`, verktyg i
 `arqen/tools/github_tools.py`: lista repon, lista/läs issues, lista pull
@@ -221,7 +234,7 @@ Faser:
 
 ## Teststatus
 
-158 tester, alla gröna. Kör efter ändringar:
+166 tester, alla gröna. Kör efter ändringar:
 
 ```powershell
 python -m compileall -q arqen
