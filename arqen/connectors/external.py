@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from arqen.connectors.base import Connector
 from arqen.connectors.github import CONNECTOR as GITHUB
+from arqen.connectors.google import CONNECTOR as GOOGLE
 from arqen.connectors.messaging import DISCORD, TELEGRAM
 
-EXTERNAL: tuple[Connector, ...] = (GITHUB, DISCORD, TELEGRAM)
+EXTERNAL: tuple[Connector, ...] = (GITHUB, GOOGLE, DISCORD, TELEGRAM)
 
 
 def connector_by_id(connector_id: str) -> Connector | None:

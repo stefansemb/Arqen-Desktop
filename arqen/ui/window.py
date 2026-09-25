@@ -1993,6 +1993,15 @@ class ArqenWindow(QMainWindow):
             inputs[item.name] = field_input
         layout.addLayout(form)
         settings = connector_store.load_settings(connector.id)
+        oauth = connector.auth == "oauth" and connector.sign_in is not None
+        account = QLabel("")
+        account.setWordWrap(True)
+        sign_in_button = QPushButton(tr("SIGN IN WITH {name}", name=connector.name.upper()))
+        if oauth:
+            sign_in_row = QHBoxLayout()
+            sign_in_row.addWidget(account, 1)
+            sign_in_row.addWidget(sign_in_button)
+            layout.addLayout(sign_in_row)
         notify = None
         if connector.notify is not None:
             notify = QCheckBox(tr("Notify here when tasks finish or fail"))
@@ -2008,8 +2017,33 @@ class ArqenWindow(QMainWindow):
         def values() -> dict[str, str]:
             return {name: field_input.text().strip() for name, field_input in inputs.items()}
 
+        def issued() -> dict[str, str]:
+            """What the sign-in stored, as long as it belongs to the typed-in client."""
+            stored = connector_store.load_credentials(connector.id)
+            if any(stored.get(name, "") != value for name, value in values().items()):
+                return {}
+            return {name: stored[name] for name in connector.issued if stored.get(name)}
+
+        def show_account() -> None:
+            current = connector_store.load_settings(connector.id)
+            if issued() and current.get("account"):
+                account.setStyleSheet("color: #b7ff18;")
+                account.setText(tr("Signed in as {account}.", account=current["account"]))
+            elif issued():
+                account.setStyleSheet("color: #b7ff18;")
+                account.setText(tr("Signed in."))
+            else:
+                account.setStyleSheet("color: #8d969d;")
+                account.setText(tr("Not signed in. Fill in the client and press {button}.",
+                                   button=tr("SIGN IN WITH {name}", name=connector.name.upper())))
+
         def test() -> None:
             current = values()
+            if oauth and all(current.values()) and not issued():
+                result.setStyleSheet("color: #ffd166;")
+                result.setText(tr("Sign in first."))
+                return
+            current = {**current, **issued()} if oauth else current
             if not all(current.values()):
                 result.setStyleSheet("color: #ffd166;")
                 result.setText(tr("Fill in every field first."))
@@ -2031,7 +2065,8 @@ class ArqenWindow(QMainWindow):
                 result.setStyleSheet("color: #ffd166;")
                 result.setText(tr("Fill in every field first."))
                 return
-            connector_store.save_credentials(connector.id, current)
+            # A changed OAuth client needs a new sign-in; the old grant is dropped.
+            connector_store.save_credentials(connector.id, {**current, **issued()} if oauth else current)
             changes = {"paused": paused.isChecked()}
             if notify is not None:
                 changes["notify"] = notify.isChecked()
@@ -2044,10 +2079,75 @@ class ArqenWindow(QMainWindow):
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             )
             if answer == QMessageBox.StandardButton.Yes:
+                if connector.sign_out is not None:
+                    # Withdrawing the grant at the service must not hold up the dialog.
+                    threading.Thread(target=connector.sign_out, args=(connector_store.load_credentials(connector.id),),
+                                     daemon=True, name="arqen-sign-out").start()
                 connector_store.forget_credentials(connector.id)
                 dialog.accept()
 
+        cancel_sign_in = threading.Event()
+        sign_in_state: dict = {}
+        sign_in_timer = QTimer(dialog)
+
+        def sign_in() -> None:
+            current = values()
+            if not all(current.values()):
+                result.setStyleSheet("color: #ffd166;")
+                result.setText(tr("Fill in every field first."))
+                return
+            sign_in_state.clear()
+            cancel_sign_in.clear()
+
+            def work() -> None:
+                try:
+                    sign_in_state["issued"] = connector.sign_in(current, cancel=cancel_sign_in)
+                except Exception as exc:
+                    sign_in_state["error"] = str(exc)
+
+            sign_in_button.setEnabled(False)
+            result.setStyleSheet("color: #d8ff75;")
+            result.setText(tr("The browser opens {name}. Approve the access there; Arqen waits here.", name=connector.name))
+            threading.Thread(target=work, daemon=True, name="arqen-sign-in").start()
+            sign_in_timer.start(250)
+
+        def sign_in_done() -> None:
+            if not sign_in_state:
+                return
+            sign_in_timer.stop()
+            sign_in_button.setEnabled(True)
+            current = values()
+            if "error" in sign_in_state:
+                result.setStyleSheet("color: #ff6b6b;")
+                result.setText(tr("Did not work: {error}", error=self._scrub(sign_in_state["error"], current)))
+                return
+            granted = dict(sign_in_state["issued"])
+            details = granted.pop("settings", {})
+            missing = granted.pop("missing", [])
+            connector_store.save_credentials(connector.id, {**current, **granted})
+            connector_store.save_settings(connector.id, paused=paused.isChecked(), **details)
+            show_account()
+            if missing:
+                result.setStyleSheet("color: #ffd166;")
+                result.setText(tr("Connected, but without access to: {scopes}. Those tools will fail until you sign in again and tick them.",
+                                  scopes=", ".join(missing)))
+            else:
+                result.setStyleSheet("color: #b7ff18;")
+                result.setText(tr("Connected. The tools can be used now."))
+
+        sign_in_timer.timeout.connect(sign_in_done)
+        dialog.finished.connect(lambda _: cancel_sign_in.set())
+
         buttons = QHBoxLayout()
+        if oauth:
+            show_account()
+            self._style_page_action(sign_in_button, primary=True)
+            sign_in_button.clicked.connect(sign_in)
+            sign_in_button.setAutoDefault(False)
+            if connector.help_url:
+                guide = QLabel(f'<a href="{connector.help_url}" style="color: #9fce20;">{tr("Open the setup page for {name}", name=connector.name)}</a>')
+                guide.setOpenExternalLinks(True)
+                layout.insertWidget(1, guide)
         test_button = QPushButton(tr("TEST CONNECTION"))
         save_button = QPushButton(tr("SAVE"))
         self._style_page_action(test_button)

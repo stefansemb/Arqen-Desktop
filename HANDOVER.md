@@ -156,7 +156,30 @@ ger säkerhets-, kostnads- och integrationsgrund för framtida agentfunktioner.
 - Kvar: nyckelhantering via gatewayn. Nycklarna ligger i `arqen-secrets.json`
   och läses direkt av providers; gatewayn injicerar inga hemligheter än.
 
-### 3. Anslutningar (verktygsarsenal) – fas 1, 2 och MCP klara
+### 3. Anslutningar (verktygsarsenal) – fas 1, 2 och 3 byggda
+
+**Status fas 3, Google (byggd 2026-09-25, inte provad mot riktigt konto):**
+`arqen/connectors/google.py` och `arqen/tools/google_tools.py`. Användaren
+skapar en egen OAuth-klient av typen Desktop app och fyller i klient-ID och
+klienthemlighet i anslutningsdialogen. LOGGA IN MED GOOGLE öppnar webbläsaren;
+svaret tas emot av en kortlivad lyssnare på `127.0.0.1` (slumpad port) och
+växlas in med PKCE (S256) och `state`-kontroll. Bara refresh-token sparas (i
+`arqen-secrets.json`, `Connector.issued`); åtkomsttoken hålls i minnet och
+förnyas när den har under en minut kvar. Konto och beviljade behörigheter
+sparas i `arqen.json` (inte bland hemligheterna, annars skulle gatewayn rensa
+användarens mejladress ur mejllistor). Behörigheter: `gmail.readonly`,
+`gmail.compose` (det finns ingen behörighet för bara utkast; Arqen har inget
+skicka-verktyg), `calendar.events`, `drive.readonly`. Kryssar användaren ur
+något hos Google visas vilka som saknas. KOPPLA FRÅN återkallar hos Google
+(i bakgrunden) och raderar nycklarna. Byts klient-ID krävs ny inloggning.
+Verktyg: `gmail_search_messages`, `gmail_read_message`, `gmail_create_draft`
+(godkännande), `calendar_list_events`, `calendar_create_event` (godkännande,
+lokal tid, heldag med exklusivt slutdatum), `drive_search_files`,
+`drive_read_file` (Docs/Presentationer som text, Kalkylark som CSV, textfiler;
+högst 256 kB). Obs: i testläge går Googles refresh-token ut efter 7 dagar;
+verktygen ber då om ny inloggning under Anslutningar. Kvar: prova mot riktigt
+konto, eventuellt statusen "Behöver återanslutas" på kortet.
+
 
 Beslutad och fas 1–2 samt MCP-delen av fas 3 byggda 2026-09-25.
 
@@ -170,8 +193,7 @@ tillsammans med verktygslistan, så appstart aldrig väntar på en server
 tecken), bär serverns JSON-schema och kräver godkännande om servern inte märkt
 dem `readOnlyHint`. `sync_mcp_tools` uppdaterar chattens verktyg direkt efter
 ändring; uppgifter får dem via sin egen motor. Att ta bort en server rensar dess
-verktyg ur agenternas listor. Google (fas 3, del 2) är nästa steg: läsa mejl,
-kalender och filer, skapa mejlutkast och kalenderhändelser med godkännande.
+verktyg ur agenternas listor.
 
 **Status fas 2:** GitHub (`arqen/connectors/github.py`, verktyg i
 `arqen/tools/github_tools.py`: lista repon, lista/läs issues, lista pull
@@ -234,7 +256,7 @@ Faser:
 
 ## Teststatus
 
-166 tester, alla gröna. Kör efter ändringar:
+188 tester, alla gröna. Kör efter ändringar:
 
 ```powershell
 python -m compileall -q arqen

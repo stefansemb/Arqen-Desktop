@@ -25,7 +25,8 @@ class Connector:
     category: str
     description: str
     tools: tuple[str, ...]
-    # "none" for built-in groups; "token" for key-based integrations; later "oauth" or "mcp".
+    # "none" for built-in groups, "token" for key-based integrations, "oauth"
+    # for a browser sign-in and "mcp" for the user's MCP servers.
     auth: str = "none"
     builtin: bool = True
     icon: str = ""
@@ -36,18 +37,27 @@ class Connector:
     # Sends a plain message, for automatic notifications; None if it cannot.
     notify: Callable[[dict[str, str], str], None] | None = field(default=None, compare=False)
     help_url: str = ""
+    # Credentials the service hands out at sign-in rather than ones the user
+    # types in, e.g. an OAuth refresh token.  Needed to count as connected.
+    issued: tuple[str, ...] = ()
+    # Runs the browser sign-in with the typed-in fields; returns the issued
+    # credentials plus non-secret details (under "settings") to keep.
+    sign_in: Callable[..., dict] | None = field(default=None, compare=False)
+    # Withdraws the grant at the service when disconnecting; best effort.
+    sign_out: Callable[[dict[str, str]], None] | None = field(default=None, compare=False)
 
     @property
     def badge(self) -> str:
         return self.icon or self.name[:1].upper()
 
     def is_connected(self) -> bool:
-        if not self.fields:
+        needed = [item.name for item in self.fields] + list(self.issued)
+        if not needed:
             return True
         from arqen.connectors.store import load_credentials
 
         values = load_credentials(self.id)
-        return all(values.get(item.name, "").strip() for item in self.fields)
+        return all(values.get(name, "").strip() for name in needed)
 
     def is_paused(self) -> bool:
         from arqen.connectors.store import load_settings

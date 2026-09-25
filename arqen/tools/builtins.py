@@ -37,6 +37,11 @@ from arqen.tools.github_tools import (
     GitHubListReposTool, GitHubListIssuesTool, GitHubReadIssueTool,
     GitHubListPullRequestsTool, GitHubCreateIssueTool,
 )
+from arqen.tools.google_tools import (
+    GmailSearchMessagesTool, GmailReadMessageTool, GmailCreateDraftTool,
+    CalendarListEventsTool, CalendarCreateEventTool,
+    DriveSearchFilesTool, DriveReadFileTool,
+)
 from arqen.tools.messaging_tools import DiscordSendMessageTool, TelegramSendMessageTool
 
 
@@ -84,6 +89,13 @@ def create_builtin_registry() -> ToolRegistry:
     registry.register(GitHubReadIssueTool())
     registry.register(GitHubListPullRequestsTool())
     registry.register(GitHubCreateIssueTool())
+    registry.register(GmailSearchMessagesTool())
+    registry.register(GmailReadMessageTool())
+    registry.register(GmailCreateDraftTool())
+    registry.register(CalendarListEventsTool())
+    registry.register(CalendarCreateEventTool())
+    registry.register(DriveSearchFilesTool())
+    registry.register(DriveReadFileTool())
     registry.register(DiscordSendMessageTool())
     registry.register(TelegramSendMessageTool())
     # MCP servers the user added; their tool lists are cached in the config.

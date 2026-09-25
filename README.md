@@ -56,6 +56,9 @@ inte går att ångra kräver ditt godkännande.
 - Ge en agent tillgång till paket av verktyg med ett klick per kort.
 - **GitHub** (personlig token): repon, issues och pull requests; att skapa en
   issue kräver godkännande.
+- **Google** (OAuth med egen Desktop-klient): söka och läsa Gmail, se kommande
+  händelser i Kalender, söka och läsa filer i Drive. Mejlutkast och
+  kalenderhändelser skapas med godkännande; inget mejl skickas.
 - **Discord** (webhook) och **Telegram** (bot): skicka meddelanden med
   godkännande, och valfria aviseringar när uppgifter blir klara eller misslyckas.
 - **MCP-servrar**: lägg till en adress (t.ex. Zapiers MCP-URL) eller ett lokalt

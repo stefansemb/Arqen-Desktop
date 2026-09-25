@@ -223,6 +223,8 @@ def test_only_irreversible_tools_ask_for_confirmation() -> None:
         "generate_image",
         "close_program",
         "github_create_issue",
+        "gmail_create_draft",
+        "calendar_create_event",
         "discord_send_message",
         "telegram_send_message",
     }
