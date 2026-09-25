@@ -60,6 +60,8 @@ _TOOLS: dict[str, ToolInfo] = {
     "search_web": ToolInfo("Webb", "Sök på webben", "Kort lista med sökträffar."),
     "fetch_webpage": ToolInfo("Webb", "Hämta webbsida", "Titel och läsbar text från en sida."),
     "open_webpage": ToolInfo("Webb", "Öppna i webbläsare", "Öppnar en adress i din webbläsare."),
+    "search_tech_news": ToolInfo("Webb", "Sök tekniknyheter", "Hacker News, Reddit och GitHub i ett anrop."),
+    "github_release_notes": ToolInfo("Webb", "Release notes", "Officiella versionsnyheter för ett GitHub-projekt."),
     "weather_forecast": ToolInfo("Webb", "Väderprognos", "Kvällsprognos för Göteborg."),
     "browser_navigate": ToolInfo("Webbläsare", "Gå till adress", "Arqens webbläsare öppnar en adress."),
     "browser_read_page": ToolInfo("Webbläsare", "Läs sida", "Titel och synlig text på sidan."),

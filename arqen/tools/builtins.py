@@ -27,6 +27,7 @@ from arqen.tools.pdf_documents import ReadPdfTool
 from arqen.tools.docx_documents import ReadDocxTool
 from arqen.tools.xlsx_documents import ReadXlsxTool
 from arqen.tools.web_tools import FetchWebpageTool, OpenWebpageTool, SearchWebTool
+from arqen.tools.research_tools import GitHubReleaseNotesTool, SearchTechNewsTool
 from arqen.tools.browser_tools import (
     BrowserNavigateTool, BrowserReadPageTool, BrowserListLinksTool,
     BrowserClickLinkTool, BrowserBackTool, BrowserForwardTool,
@@ -75,6 +76,8 @@ def create_builtin_registry() -> ToolRegistry:
     registry.register(FetchWebpageTool())
     registry.register(OpenWebpageTool())
     registry.register(SearchWebTool())
+    registry.register(SearchTechNewsTool())
+    registry.register(GitHubReleaseNotesTool())
     registry.register(BrowserNavigateTool())
     registry.register(BrowserReadPageTool())
     registry.register(BrowserListLinksTool())

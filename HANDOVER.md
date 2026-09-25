@@ -46,8 +46,8 @@ gammal utcheckning med egen `data/`; en `git pull` där gör den till Kontrollru
 ## Viktiga nästa åtgärder
 
 1. Tool Gateway, Memory 2.0 och Anslutningar fas 1–3 är klara, liksom
-   "Arqen (chatten)" i agentväljaren. Kvar enligt planen: mobilstödet och
-   bättre webbresearch för Scout (se respektive avsnitt).
+   "Arqen (chatten)" i agentväljaren och bättre webbresearch för Scout. Kvar
+   enligt planen: mobilstödet (se avsnittet Mobilstöd).
 
 Reserven (`FallbackProvider`) har `supports_tools`, `respond_stream` och 90 s
 timeout. Profilval i Inställningar skrev tidigare in 10 s; nu används
@@ -92,10 +92,26 @@ F2 och Delete). Verktyg-vyn har flikarna Katalog, Agenter och Logg; svenska namn
 och kategorier ligger i `arqen/ui/tool_catalog.py`, och ett test kräver att
 varje nytt verktyg får en post där.
 
-Scout är research-agent och har tillgång till `search_web` och
-`fetch_webpage`. Reddit kan blockera direkthämtning, så framtida webbresearch
-bör ha Reddit JSON/RSS-fallback, retry/backoff, källgränser och tydlig fallback
-till GitHub, Hacker News och officiella release notes.
+Scout är research-agent. Webbresearchen (`arqen/tools/research_tools.py`,
+byggd 2026-09-26) håller när sajter säger ifrån:
+
+- `fetch_webpage` och `search_web` försöker igen vid 429, 5xx och timeout
+  (paus 1 s och 2,5 s, eller serverns `Retry-After`, högst 5 s; tre försök).
+  403/404 försöks inte igen; 403/429 ger ett tips om andra källor.
+- Reddit-adresser läses via Reddits JSON och i andra hand RSS (Atom). JSON
+  svarar ofta 403 utan inloggning; efter en vägran går Arqen direkt till RSS i
+  en timme, vilket halverar anropen och håller nere 429. Blockeras båda säger
+  verktyget det och pekar på `search_tech_news` och officiella källor.
+- `search_tech_news`: Hacker News (Algolia), Reddit och GitHub i ett anrop,
+  högst 5 träffar per källa; en blockerad källa redovisas och de andra svarar.
+- `github_release_notes`: de 5 senaste releaserna (text högst 1 500 tecken
+  styck), annars de senaste taggarna. Använder GitHub-token om GitHub är
+  anslutet (högre gräns), fungerar utan.
+- Källgränser: högst 12 000 tecken per hämtad sida; alla svar har adresser.
+
+Provat mot riktiga tjänster: Hacker News, GitHub, release notes, DuckDuckGo och
+Reddit (via RSS) svarar. Scout måste ges de två nya verktygen (Anslutningar →
+Scout → Webb → GE ALLA).
 
 ## Nya prioriterade spår
 
@@ -290,7 +306,7 @@ Faser:
 
 ## Teststatus
 
-212 tester, alla gröna. Kör efter ändringar:
+227 tester, alla gröna. Kör efter ändringar:
 
 ```powershell
 python -m compileall -q arqen

@@ -10,7 +10,7 @@ _BUILTIN = {
     "Fönster & program": ("windows", "Se, fokusera, starta och stänga program och fönster.", "F"),
     "Filer i arbetsytan": ("files", "Lista, söka, läsa och ändra filer i arbetsytan.", "A"),
     "Dokument": ("documents", "Läsa PDF-, Word- och Excel-filer.", "D"),
-    "Webb": ("web", "Söka på webben, hämta sidor och väder.", "W"),
+    "Webb": ("web", "Söka på webben, hämta sidor, tekniknyheter, release notes och väder.", "W"),
     "Webbläsare": ("browser", "Styra Arqens egen webbläsare: gå till, läsa, klicka.", "B"),
     "Röst & bild": ("voice-image", "Läsa upp text och skapa bilder.", "R"),
     "Minne": ("memory", "Föreslå saker att minnas; du godkänner dem.", "M"),

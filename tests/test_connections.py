@@ -61,7 +61,8 @@ def test_connections_view_grants_tools_to_the_chosen_agent():
 
     window._set_connector_access("builtin:web", True)
     assert set(_connector("builtin:web").tools) <= set(store.get_agent("tester").allowed_tools)
-    assert "5 av" in window.connections_summary.text()
+    # current_time plus every web tool
+    assert f"{1 + len(_connector('builtin:web').tools)} av" in window.connections_summary.text()
 
     window._set_connector_access("builtin:system", False)  # current_time lives there
     agent = store.get_agent("tester")

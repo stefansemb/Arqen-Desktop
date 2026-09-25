@@ -5,6 +5,7 @@ from urllib.parse import parse_qs, quote, quote_plus, unquote, urlparse, urlunpa
 from urllib.request import Request, urlopen
 import webbrowser
 
+from arqen.tools import research_tools as research
 from arqen.tools.base import Tool
 
 
@@ -75,7 +76,7 @@ def _normalize_known_domain(url: str) -> str:
 
 class FetchWebpageTool(Tool):
     name = "fetch_webpage"
-    description = "Fetches the title and readable text from a public web page."
+    description = "Fetches the title and readable text from a public web page, Reddit threads included."
     requires_confirmation = False
     arguments_schema = {"url": str}
 
@@ -87,14 +88,20 @@ class FetchWebpageTool(Tool):
         parsed = urlparse(url)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             raise ValueError("URL must start with http:// or https://")
-        request = Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/130 Safari/537.36"})
-        with urlopen(request, timeout=8) as response:
-            raw = response.read(2_000_000)
-            charset = response.headers.get_content_charset() or "utf-8"
+        if research.is_reddit(url):
+            # Reddit blocks plain page fetches; its JSON and RSS feeds usually answer.
+            return f"URL: {url}\n\n{research.clip(research.read_reddit(url), research.PAGE_LIMIT)}"
+        try:
+            raw, charset = research.fetch(url, timeout=8)
+        except research.FetchError as exc:
+            hint = (" The site refuses automated reading; try search_tech_news, the project's GitHub "
+                    "release notes or another source.") if str(exc) in {"HTTP 403", "HTTP 429"} else ""
+            raise RuntimeError(f"Could not fetch {url}: {exc}.{hint}") from None
         parser = _TextExtractor()
         parser.feed(raw.decode(charset, errors="replace"))
         text = " ".join(parser.parts)
-        return f"Title: {parser.title or '(untitled)'}\nURL: {url}\n\n{text[:20_000]}"
+        # A cap per source, so one long page cannot crowd out the rest of the research.
+        return f"Title: {parser.title or '(untitled)'}\nURL: {url}\n\n{research.clip(text, research.PAGE_LIMIT)}"
 
 
 class OpenWebpageTool(Tool):
@@ -138,9 +145,9 @@ class SearchWebTool(Tool):
         if not query:
             raise ValueError("Search query cannot be empty")
         url = f"https://html.duckduckgo.com/html/?q={quote_plus(query)}"
-        request = Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/130 Safari/537.36"})
-        with urlopen(request, timeout=15) as response:
-            html = response.read(2_000_000).decode("utf-8", errors="replace")
+        # DuckDuckGo rate-limits bursts of searches; fetch retries those with a short pause.
+        raw, charset = research.fetch(url, timeout=15)
+        html = raw.decode(charset, errors="replace")
         parser = _SearchExtractor()
         parser.feed(html)
         if not parser.results:
