@@ -151,7 +151,7 @@ def authorize(credentials: dict[str, str], cancel: threading.Event | None = None
         account = str((_api("GET", f"{GMAIL}/profile", tokens["access_token"]) or {}).get("emailAddress", ""))
     return {
         "refresh_token": refresh,
-        "settings": {"account": account, "scopes": list(granted)},
+        "settings": {"account": account, "scopes": list(granted), "needs_reconnect": False},
         # Google lets the user untick scopes on the consent page.
         "missing": missing_scopes(granted),
     }
@@ -192,12 +192,23 @@ def access_token(credentials: dict[str, str]) -> str:
     except ServiceError as exc:
         # Testing-mode clients get refresh tokens that expire after 7 days.
         if "invalid_grant" in str(exc) or "HTTP 401" in str(exc):
+            _mark_needs_reconnect(True)
             raise ServiceError(REAUTHORIZE) from None
         raise
     if not tokens.get("access_token"):
+        _mark_needs_reconnect(True)
         raise ServiceError(REAUTHORIZE)
     _remember(refresh, tokens)
+    _mark_needs_reconnect(False)
     return tokens["access_token"]
+
+
+def _mark_needs_reconnect(value: bool) -> None:
+    """Let the Connections card show that the sign-in has to be renewed."""
+    from arqen.connectors.store import load_settings, save_settings
+
+    if bool(load_settings("google").get("needs_reconnect", False)) != value:
+        save_settings("google", needs_reconnect=value)
 
 
 def _api(method: str, url: str, token: str, body: dict | None = None):

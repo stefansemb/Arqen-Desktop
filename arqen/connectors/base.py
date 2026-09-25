@@ -64,6 +64,12 @@ class Connector:
 
         return bool(load_settings(self.id).get("paused", False))
 
+    def needs_reconnect(self) -> bool:
+        """Connected once, but the service no longer accepts the sign-in."""
+        from arqen.connectors.store import load_settings
+
+        return self.is_connected() and bool(load_settings(self.id).get("needs_reconnect", False))
+
     def is_active(self) -> bool:
         return self.is_connected() and not self.is_paused()
 

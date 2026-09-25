@@ -128,7 +128,7 @@ def test_sign_in_uses_pkce_on_the_loopback_address(web):
     assert base64.urlsafe_b64encode(digest).rstrip(b"=").decode() == seen["code_challenge"]
     assert result == {
         "refresh_token": "1//new-refresh",
-        "settings": {"account": "stefan@example.com", "scopes": list(google.SCOPES)},
+        "settings": {"account": "stefan@example.com", "scopes": list(google.SCOPES), "needs_reconnect": False},
         "missing": [],
     }
 
@@ -142,7 +142,7 @@ def test_sign_in_reports_unticked_scopes(web):
 
     result = google.authorize(CLIENT, open_url=open_url, timeout=10)
 
-    assert result["settings"] == {"account": "", "scopes": [google.SCOPES[2]]}
+    assert result["settings"]["account"] == "" and result["settings"]["scopes"] == [google.SCOPES[2]]
     assert result["missing"] == ["gmail.readonly", "gmail.compose", "drive.readonly"]
 
 
@@ -377,3 +377,31 @@ def test_google_secrets_never_reach_tool_output(web, gateway):
     assert not result.ok
     assert CLIENT["client_secret"] not in result.output
     assert SIGNED_IN["refresh_token"] not in result.output
+
+
+def test_an_expired_grant_marks_the_card_until_signed_in_again(web):
+    _, answers = web
+    store.save_credentials("google", SIGNED_IN)
+    connector = connector_by_id("google")
+    answers["oauth2.googleapis.com/token"] = _http_error(400, {"error": "invalid_grant"})
+
+    with pytest.raises(ServiceError):
+        google.access_token(SIGNED_IN)
+    assert connector.needs_reconnect()
+
+    # A later refresh that works (e.g. a new sign-in) clears the mark.
+    answers["oauth2.googleapis.com/token"] = {"access_token": "ya29.new", "expires_in": 3599}
+    google.access_token(SIGNED_IN)
+    assert not connector.needs_reconnect()
+
+
+def test_a_fresh_sign_in_clears_the_reconnect_mark(web):
+    _, answers = web
+    answers["oauth2.googleapis.com/token"] = {"access_token": "a", "refresh_token": "1//r", "scope": ""}
+    open_url, _ = _browser(lambda params: f"state={params['state']}&code=c")
+    assert google.authorize(CLIENT, open_url=open_url, timeout=10)["settings"]["needs_reconnect"] is False
+
+
+def test_a_disconnected_card_never_asks_to_reconnect():
+    store.save_settings("google", needs_reconnect=True)
+    assert not connector_by_id("google").needs_reconnect()

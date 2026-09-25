@@ -53,6 +53,12 @@ _SV: dict[str, str] = {
     "Remove the saved credentials for {name}?": "Ta bort de sparade uppgifterna för {name}?",
     "DISCONNECT": "KOPPLA FRÅN",
     "SIGN IN WITH {name}": "LOGGA IN MED {name}",
+    "NEEDS RECONNECTING": "BEHÖVER ÅTERANSLUTAS",
+    "RECONNECT": "ÅTERANSLUT",
+    "The sign-in has expired or was revoked. Press {button} again.":
+        "Inloggningen har gått ut eller återkallats. Tryck {button} igen.",
+    "{count} connections need to be signed in again.": "{count} anslutningar behöver loggas in igen.",
+    "A connection needs to be signed in again.": "En anslutning behöver loggas in igen.",
     "Sign in first.": "Logga in först.",
     "Signed in as {account}.": "Inloggad som {account}.",
     "Signed in.": "Inloggad.",

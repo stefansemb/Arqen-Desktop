@@ -1914,6 +1914,8 @@ class ArqenWindow(QMainWindow):
             chip_text, chip_color = tr("BUILT-IN"), "#8d969d"
         elif not connector.is_connected():
             chip_text, chip_color = tr("NOT CONNECTED"), "#8d969d"
+        elif connector.needs_reconnect():
+            chip_text, chip_color = tr("NEEDS RECONNECTING"), "#ff9f1c"
         elif connector.is_paused():
             chip_text, chip_color = tr("PAUSED"), "#ffd166"
         else:
@@ -1923,8 +1925,12 @@ class ArqenWindow(QMainWindow):
         heading.addWidget(chip)
         card_layout.addLayout(heading)
         if not connector.builtin:
-            manage = QPushButton(tr("MANAGE") if connector.is_connected() else tr("+ CONNECT"))
-            self._style_page_action(manage, primary=not connector.is_connected())
+            reconnect = connector.needs_reconnect()
+            if reconnect:
+                manage = QPushButton(tr("RECONNECT"))
+            else:
+                manage = QPushButton(tr("MANAGE") if connector.is_connected() else tr("+ CONNECT"))
+            self._style_page_action(manage, primary=reconnect or not connector.is_connected())
             if connector.auth == "mcp":
                 manage.clicked.connect(lambda _, cid=connector.id: self._open_mcp_dialog(cid))
             else:
@@ -2026,7 +2032,11 @@ class ArqenWindow(QMainWindow):
 
         def show_account() -> None:
             current = connector_store.load_settings(connector.id)
-            if issued() and current.get("account"):
+            if issued() and current.get("needs_reconnect"):
+                account.setStyleSheet("color: #ff9f1c;")
+                account.setText(tr("The sign-in has expired or was revoked. Press {button} again.",
+                                   button=tr("SIGN IN WITH {name}", name=connector.name.upper())))
+            elif issued() and current.get("account"):
                 account.setStyleSheet("color: #b7ff18;")
                 account.setText(tr("Signed in as {account}.", account=current["account"]))
             elif issued():
@@ -2377,6 +2387,35 @@ class ArqenWindow(QMainWindow):
 
         threading.Thread(target=send, daemon=True, name="arqen-notify").start()
 
+    def _check_sign_ins(self) -> None:
+        """Try each browser sign-in once at start, so an expired one shows before it is needed."""
+        checks = [(connector.test, connector_store.load_credentials(connector.id)) for connector in EXTERNAL
+                  if connector.auth == "oauth" and connector.test is not None and connector.is_active()]
+
+        def run() -> None:
+            for test, credentials in checks:
+                try:
+                    test(credentials)  # an expired grant marks itself; the badge picks it up
+                except Exception as exc:
+                    print(f"Sign-in check failed: {type(exc).__name__}", flush=True)
+
+        if checks:
+            threading.Thread(target=run, daemon=True, name="arqen-sign-in-check").start()
+
+    def _refresh_connections_badge(self) -> None:
+        """Show on the menu how many connections have to be signed in again."""
+        button = getattr(self, "navigation_buttons", {}).get("Connections")
+        if button is None:
+            return
+        count = sum(connector.needs_reconnect() for connector in EXTERNAL)
+        label = f"{self._navigation_icons.get('Connections', '')}  {tr('Connections')}"
+        button.setText(f"{label}  · {count}" if count else label)
+        button.setToolTip((tr("A connection needs to be signed in again.") if count == 1 else tr("{count} connections need to be signed in again.", count=count)) if count else "")
+        # The cards follow as soon as the state changes, even with the view open.
+        if count != getattr(self, "_reconnect_count_seen", count):
+            self._refresh_connection_cards()
+        self._reconnect_count_seen = count
+
     def _set_connector_access(self, connector_id: str, grant: bool) -> None:
         agent = self._selected_connection_agent()
         connector = next((item for item in all_connectors(self.engine.tools) if item.id == connector_id), None)
@@ -2496,7 +2535,9 @@ class ArqenWindow(QMainWindow):
         self.mission_activity_timer.timeout.connect(self._refresh_approval_bar)
         self.mission_activity_timer.timeout.connect(lambda: self._refresh_memory_badge())
         self.mission_activity_timer.timeout.connect(self._notify_task_changes)
+        self.mission_activity_timer.timeout.connect(self._refresh_connections_badge)
         self.mission_activity_timer.start()
+        self._check_sign_ins()
         panel_layout.addWidget(QLabel(tr("SCHEDULES")))
         legacy_schedules = QListWidget()
         panel_layout.addWidget(legacy_schedules)

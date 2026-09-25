@@ -158,7 +158,7 @@ ger säkerhets-, kostnads- och integrationsgrund för framtida agentfunktioner.
 
 ### 3. Anslutningar (verktygsarsenal) – fas 1, 2 och 3 byggda
 
-**Status fas 3, Google (byggd 2026-09-25, inte provad mot riktigt konto):**
+**Status fas 3, Google (klar 2026-09-25):**
 `arqen/connectors/google.py` och `arqen/tools/google_tools.py`. Användaren
 skapar en egen OAuth-klient av typen Desktop app och fyller i klient-ID och
 klienthemlighet i anslutningsdialogen. LOGGA IN MED GOOGLE öppnar webbläsaren;
@@ -176,9 +176,13 @@ Verktyg: `gmail_search_messages`, `gmail_read_message`, `gmail_create_draft`
 (godkännande), `calendar_list_events`, `calendar_create_event` (godkännande,
 lokal tid, heldag med exklusivt slutdatum), `drive_search_files`,
 `drive_read_file` (Docs/Presentationer som text, Kalkylark som CSV, textfiler;
-högst 256 kB). Obs: i testläge går Googles refresh-token ut efter 7 dagar;
-verktygen ber då om ny inloggning under Anslutningar. Kvar: prova mot riktigt
-konto, eventuellt statusen "Behöver återanslutas" på kortet.
+högst 256 kB). Obs: i testläge går Googles refresh-token ut efter 7 dagar.
+Då sätts `needs_reconnect` i `arqen.json` (`Connector.needs_reconnect()`):
+kortet visar BEHÖVER ÅTERANSLUTAS och knappen ÅTERANSLUT, menyn visar
+"Anslutningar · 1", och verktygen ber om ny inloggning. Vid appstart provas
+inloggningen en gång i bakgrunden (`_check_sign_ins`), så statusen syns innan
+verktygen behövs. En lyckad förnyelse eller ny inloggning tar bort markeringen.
+Provad mot riktigt konto 2026-09-25: läsverktygen fungerar.
 
 
 Beslutad och fas 1–2 samt MCP-delen av fas 3 byggda 2026-09-25.
@@ -256,7 +260,7 @@ Faser:
 
 ## Teststatus
 
-188 tester, alla gröna. Kör efter ändringar:
+191 tester, alla gröna. Kör efter ändringar:
 
 ```powershell
 python -m compileall -q arqen
