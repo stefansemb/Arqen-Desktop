@@ -104,3 +104,28 @@ def test_approval_bar_shows_and_answers_pending_decisions():
     assert window.mission_store.get_task(task.id).status == "cancelled"
     assert window.approval_bar.isHidden()
     window.close()
+
+
+@pytest.mark.skipif(os.name != "nt" and not os.environ.get("DISPLAY"), reason="Qt display is unavailable")
+def test_choosing_a_profile_keeps_a_realistic_fallback_timeout():
+    """Profiles used to write 10 s, far below a real turn (one took 58 s)."""
+    from PyQt6.QtWidgets import QCheckBox, QComboBox, QLineEdit
+
+    from arqen.providers.config import ProviderConfig
+
+    app = QApplication.instance() or QApplication([])
+    config = load_provider_config()
+    window = ArqenWindow(
+        ConversationEngine(provider=create_provider(config), tools=create_builtin_registry()),
+        provider_label=config.name,
+        profile_name=config.profile_name,
+    )
+    provider, model, fallback_provider = QComboBox(), QComboBox(), QComboBox()
+    for value in ("local", "openrouter", "openai", "gemini"):
+        provider.addItem(value, value)
+    base_url, timeout, api_key, fallback_timeout = QLineEdit(), QLineEdit(), QLineEdit(), QLineEdit("10.0")
+    window.apply_provider_profile(
+        "fast", provider, model, base_url, timeout, api_key, QCheckBox(), fallback_provider, fallback_timeout
+    )
+    assert float(fallback_timeout.text()) == ProviderConfig().fallback_timeout == 90.0
+    window.close()

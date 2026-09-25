@@ -3579,7 +3579,9 @@ class ArqenWindow(QMainWindow):
         api_key.setText(load_api_key(name))
         fallback_enabled.setChecked(fallback)
         fallback_provider.setCurrentIndex(max(0, fallback_provider.findData(reserve)))
-        fallback_timeout.setText("10.0")
+        # From the config default, not a literal: a hard-coded 10 s here cut
+        # real turns short (one measured MiMo turn took 58 s).
+        fallback_timeout.setText(str(ProviderConfig().fallback_timeout))
 
     def provider_overview(self, fallback_enabled: bool | None = None) -> str:
         provider = getattr(self.engine.provider, "provider_name", self.provider_label).upper()
@@ -3640,7 +3642,7 @@ class ArqenWindow(QMainWindow):
         if chosen:
             field.setText(str(Path(chosen)))
 
-    def save_settings(self, dialog: QDialog, name: str, model: str, base_url: str, timeout: str, api_key: str, fallback_enabled: bool = False, fallback_provider: str = "", fallback_timeout: str = "10", profile_name: str = "", workspace: str = "") -> None:
+    def save_settings(self, dialog: QDialog, name: str, model: str, base_url: str, timeout: str, api_key: str, fallback_enabled: bool = False, fallback_provider: str = "", fallback_timeout: str = str(ProviderConfig().fallback_timeout), profile_name: str = "", workspace: str = "") -> None:
         try:
             config = ProviderConfig(
                 name=name,

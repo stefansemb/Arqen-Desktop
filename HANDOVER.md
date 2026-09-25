@@ -44,13 +44,13 @@ gammal utcheckning med egen `data/`; en `git pull` där gör den till Kontrollru
 
 ## Viktiga nästa åtgärder
 
-1. **Profilval i Inställningar sätter reservens timeout till 10 s**
-   (`apply_provider_profile` i `arqen/ui/window.py`). `FallbackProvider` har
-   numera `supports_tools`, `respond_stream` och 90 s som standard, men väljer
-   man en profil skrivs 10 s in igen — långt under verkliga turer (en uppmätt
-   MiMo-tur tog 58 s). Åtgärda innan fallback slås på.
-2. `reflect` i Memory 2.0 och kostnad/nyckelhantering i Tool Gateway återstår,
+1. `reflect` i Memory 2.0 och kostnad/nyckelhantering i Tool Gateway återstår,
    se status under respektive spår nedan.
+
+Reserven (`FallbackProvider`) har `supports_tools`, `respond_stream` och 90 s
+timeout. Profilval i Inställningar skrev tidigare in 10 s; nu används
+`ProviderConfig().fallback_timeout`, och den sparade konfigurationen är rättad.
+Reserven är fortfarande avstängd medan modeller utvärderas.
 
 Verktygsscheman väljs redan per tur (`build_relevant_tool_schemas`, högst 12 plus
 de som alltid erbjuds), så alla 36 skickas inte längre varje gång.
@@ -59,8 +59,9 @@ de som alltid erbjuds), så alla 36 skickas inte längre varje gång.
 
 I koden heter delen Mission Control; i gränssnittet visas den som Kontrollrum.
 Den har separata vyer för Översikt, Uppgifter, Arbetsflöden, Scheman, Agenter och
-Aktivitet. Översikt är systemöversikt medan Kontrollrum är den operativa kön. Tasks, workflows, schedules och agentkort använder en mer
-kortbaserad och lättläst layout. Activity visar senaste händelsen per task och
+Aktivitet. Översikt är systemöversikt medan Kontrollrum är den operativa kön.
+Tasks, workflows, schedules och agentkort använder en mer kortbaserad och
+lättläst layout. Activity visar senaste händelsen per task och
 task-resultat kan öppnas i ett större Markdown-renderat resultatfönster.
 
 Scheduler- och task-worker körs i desktop-appen. Schedules kan vara dagliga,
@@ -157,7 +158,7 @@ ger säkerhets-, kostnads- och integrationsgrund för framtida agentfunktioner.
 
 ## Teststatus
 
-130 tester, alla gröna. Kör efter ändringar:
+131 tester, alla gröna. Kör efter ändringar:
 
 ```powershell
 python -m compileall -q arqen
