@@ -14,6 +14,10 @@ class CredentialField:
     secret: bool = True
     placeholder: str = ""
     help: str = ""
+    # Finds the value from the other fields, e.g. a chat id from a bot token.
+    # Returns (value, description) pairs, newest first; raises with a readable message.
+    lookup: Callable[[dict[str, str]], list[tuple[str, str]]] | None = field(default=None, compare=False)
+    lookup_label: str = ""
 
 
 @dataclass(frozen=True)

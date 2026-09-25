@@ -1985,12 +1985,23 @@ class ArqenWindow(QMainWindow):
         form = QFormLayout()
         saved = connector_store.load_credentials(connector.id)
         inputs: dict[str, QLineEdit] = {}
+        lookups: list[tuple[QPushButton, object]] = []
         for item in connector.fields:
             field_input = QLineEdit(saved.get(item.name, ""))
             field_input.setPlaceholderText(item.placeholder)
             if item.secret:
                 field_input.setEchoMode(QLineEdit.EchoMode.Password)
-            form.addRow(item.label, field_input)
+            if item.lookup is not None:
+                row = QHBoxLayout()
+                row.addWidget(field_input, 1)
+                lookup_button = QPushButton(tr(item.lookup_label))
+                self._style_page_action(lookup_button)
+                lookup_button.setAutoDefault(False)
+                row.addWidget(lookup_button)
+                form.addRow(item.label, row)
+                lookups.append((lookup_button, item))
+            else:
+                form.addRow(item.label, field_input)
             if item.help:
                 hint = QLabel(item.help)
                 hint.setWordWrap(True)
@@ -2022,6 +2033,36 @@ class ArqenWindow(QMainWindow):
 
         def values() -> dict[str, str]:
             return {name: field_input.text().strip() for name, field_input in inputs.items()}
+
+        def run_lookup(item) -> None:
+            current = values()
+            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+            try:
+                found = item.lookup(current)
+            except Exception as exc:
+                result.setStyleSheet("color: #ff6b6b;")
+                result.setText(tr("Did not work: {error}", error=self._scrub(str(exc), current)))
+                return
+            finally:
+                QApplication.restoreOverrideCursor()
+            if not found:
+                result.setStyleSheet("color: #ffd166;")
+                result.setText(tr("No messages to the bot yet. Write something to it in Telegram and try again. "
+                                  "If another program reads the bot (e.g. monitoring), use @userinfobot instead."))
+                return
+            value = found[0][0]
+            if len(found) > 1:
+                choices = [f"{label}  ·  {chat}" for chat, label in found]
+                choice, ok = QInputDialog.getItem(dialog, tr(item.lookup_label), tr("Which chat should Arqen use?"), choices, 0, False)
+                if not ok:
+                    return
+                value = found[choices.index(choice)][0]
+            inputs[item.name].setText(value)
+            result.setStyleSheet("color: #b7ff18;")
+            result.setText(tr("Filled in: {value}. Press TEST CONNECTION and SAVE.", value=value))
+
+        for lookup_button, item in lookups:
+            lookup_button.clicked.connect(lambda _, field=item: run_lookup(field))
 
         def issued() -> dict[str, str]:
             """What the sign-in stored, as long as it belongs to the typed-in client."""

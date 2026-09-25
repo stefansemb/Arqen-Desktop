@@ -53,6 +53,11 @@ _SV: dict[str, str] = {
     "Remove the saved credentials for {name}?": "Ta bort de sparade uppgifterna för {name}?",
     "DISCONNECT": "KOPPLA FRÅN",
     "SIGN IN WITH {name}": "LOGGA IN MED {name}",
+    "FETCH CHAT ID": "HÄMTA CHATT-ID",
+    "Which chat should Arqen use?": "Vilken chatt ska Arqen använda?",
+    "Filled in: {value}. Press TEST CONNECTION and SAVE.": "Ifyllt: {value}. Tryck TESTA ANSLUTNING och SPARA.",
+    "No messages to the bot yet. Write something to it in Telegram and try again. If another program reads the bot (e.g. monitoring), use @userinfobot instead.":
+        "Inga meddelanden till boten än. Skriv något till den i Telegram och försök igen. Läser ett annat program av boten (t.ex. övervakning) – använd @userinfobot i stället.",
     "NEEDS RECONNECTING": "BEHÖVER ÅTERANSLUTAS",
     "RECONNECT": "ÅTERANSLUT",
     "The sign-in has expired or was revoked. Press {button} again.":

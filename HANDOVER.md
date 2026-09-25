@@ -211,7 +211,12 @@ requests, skapa issue med godkännande) och Discord (webhook) + Telegram (bot)
 (`arqen/connectors/messaging.py`, `arqen/tools/messaging_tools.py`; skicka
 kräver godkännande). Nycklar sparas i `arqen-secrets.json` under `connectors`
 via `arqen/connectors/store.py`; paus/avisering i `arqen.json` under
-`connectors`. Verktyg med `connector_id` erbjuds modellen bara när anslutningen
+`connectors`. Telegram-dialogen har HÄMTA CHATT-ID (`CredentialField.lookup`,
+`telegram_recent_chats`): läser bottens `getUpdates` utan `offset` och utan
+`allowed_updates`, så ett annat program som läser samma bot (t.ex.
+VPS-övervakningen) inte tappar meddelanden eller får ändrade inställningar.
+Läser ett annat program redan av boten blir listan tom; då hänvisas till
+@userinfobot. `connectors`. Verktyg med `connector_id` erbjuds modellen bara när anslutningen
 är aktiv (`Tool.available()`), läser sin nyckel först när de körs
 (`Tool.credentials()`), och gatewayn rensar sparade nycklar ur all
 verktygsutdata. Anslutningsdialogen har TESTA ANSLUTNING (utan bieffekter),
@@ -266,7 +271,7 @@ Faser:
 
 ## Teststatus
 
-195 tester, alla gröna. Kör efter ändringar:
+201 tester, alla gröna. Kör efter ändringar:
 
 ```powershell
 python -m compileall -q arqen
