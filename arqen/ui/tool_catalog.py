@@ -19,6 +19,8 @@ CATEGORIES = (
     "Webbläsare",
     "Röst & bild",
     "Minne",
+    "Utveckling",
+    "Meddelanden",
     "Övrigt",
 )
 
@@ -67,6 +69,13 @@ _TOOLS: dict[str, ToolInfo] = {
     "stop_speech": ToolInfo("Röst & bild", "Stoppa uppläsning", "Avbryter pågående uppläsning."),
     "generate_image": ToolInfo("Röst & bild", "Skapa bild", "Genererar en bild via OpenRouter. Kostar pengar."),
     "propose_memory": ToolInfo("Minne", "Föreslå minne", "Föreslår något att minnas. Du godkänner det under Minne."),
+    "github_list_repos": ToolInfo("Utveckling", "GitHub: lista repon", "Dina repon, senast ändrade först."),
+    "github_list_issues": ToolInfo("Utveckling", "GitHub: lista issues", "Öppna issues i ett repo."),
+    "github_read_issue": ToolInfo("Utveckling", "GitHub: läs issue", "Titel, status, etiketter och text."),
+    "github_list_pull_requests": ToolInfo("Utveckling", "GitHub: lista pull requests", "Öppna pull requests i ett repo."),
+    "github_create_issue": ToolInfo("Utveckling", "GitHub: skapa issue", "Skapar en ny issue i ett repo."),
+    "discord_send_message": ToolInfo("Meddelanden", "Discord: skicka", "Skickar ett meddelande till din kanal."),
+    "telegram_send_message": ToolInfo("Meddelanden", "Telegram: skicka", "Skickar ett meddelande via din bot."),
 }
 
 

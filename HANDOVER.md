@@ -156,9 +156,26 @@ ger säkerhets-, kostnads- och integrationsgrund för framtida agentfunktioner.
 - Kvar: nyckelhantering via gatewayn. Nycklarna ligger i `arqen-secrets.json`
   och läses direkt av providers; gatewayn injicerar inga hemligheter än.
 
-### 3. Anslutningar (verktygsarsenal) – fas 1 klar
+### 3. Anslutningar (verktygsarsenal) – fas 1 och 2 klara
 
-Beslutad och fas 1 byggd 2026-09-25. Inspirerad av en "Tool armory": ett rutnät
+Beslutad och fas 1–2 byggda 2026-09-25.
+
+**Status fas 2:** GitHub (`arqen/connectors/github.py`, verktyg i
+`arqen/tools/github_tools.py`: lista repon, lista/läs issues, lista pull
+requests, skapa issue med godkännande) och Discord (webhook) + Telegram (bot)
+(`arqen/connectors/messaging.py`, `arqen/tools/messaging_tools.py`; skicka
+kräver godkännande). Nycklar sparas i `arqen-secrets.json` under `connectors`
+via `arqen/connectors/store.py`; paus/avisering i `arqen.json` under
+`connectors`. Verktyg med `connector_id` erbjuds modellen bara när anslutningen
+är aktiv (`Tool.available()`), läser sin nyckel först när de körs
+(`Tool.credentials()`), och gatewayn rensar sparade nycklar ur all
+verktygsutdata. Anslutningsdialogen har TESTA ANSLUTNING (utan bieffekter),
+SPARA, KOPPLA FRÅN och paus. Discord/Telegram kan avisera när en uppgift blir
+klar eller misslyckas (av som standard; `_notify_task_changes` i fönstret,
+aldrig för uppgifter som var klara innan appen startade). `tests/conftest.py`
+pekar även om `paths.config_dir`, så tester aldrig rör riktiga nycklar.
+`save_provider_config` bevarar nu övriga nycklar i båda konfigurationsfilerna
+(skrev tidigare om dem från grunden). Inspirerad av en "Tool armory": ett rutnät
 med integrationer som ansluts och delas ut till agenter.
 
 **Status fas 1:** `arqen/connectors/` (Connector, tilldelningslogik och
@@ -189,7 +206,7 @@ Faser:
 
 1. Ramverk, vy och agentval med de inbyggda verktygsgrupperna. **Klar.**
 2. Första integrationer: **GitHub** (personlig token) och **Discord/Telegram**
-   (webhook/bot för aviseringar, t.ex. när en uppgift är klar).
+   (webhook/bot för aviseringar, t.ex. när en uppgift är klar). **Klar.**
 3. Google via OAuth (Gmail, Kalender, Drive) och en MCP-klient som öppnar
    många verktyg via en anslutning.
 
@@ -204,7 +221,7 @@ Faser:
 
 ## Teststatus
 
-147 tester, alla gröna. Kör efter ändringar:
+158 tester, alla gröna. Kör efter ändringar:
 
 ```powershell
 python -m compileall -q arqen

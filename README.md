@@ -51,6 +51,16 @@ inte går att ångra kräver ditt godkännande.
   verktygsanrop, synliga under Verktyg.
 - Minnen som ser ut som lösenord eller nycklar sparas aldrig.
 
+**Anslutningar**
+
+- Ge en agent tillgång till paket av verktyg med ett klick per kort.
+- **GitHub** (personlig token): repon, issues och pull requests; att skapa en
+  issue kräver godkännande.
+- **Discord** (webhook) och **Telegram** (bot): skicka meddelanden med
+  godkännande, och valfria aviseringar när uppgifter blir klara eller misslyckas.
+- Nycklar sparas i `config/arqen-secrets.json`, läses först när ett verktyg körs
+  och rensas bort ur allt verktygen svarar.
+
 **Modeller**
 
 - Ollama/LM Studio, OpenRouter, OpenAI, Gemini, Claude och Arqen Remote.

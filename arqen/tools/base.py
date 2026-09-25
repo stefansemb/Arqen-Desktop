@@ -9,7 +9,24 @@ class Tool(ABC):
     # Offered to the model on every turn, even when the per-turn selection of
     # relevant tools finds no words in common with the conversation.
     always_offered: bool = False
+    # The connection this tool belongs to, if it needs one (e.g. "github").
+    connector_id: str | None = None
     arguments_schema: dict[str, type] = {}
+
+    def available(self) -> bool:
+        """Whether the tool can run now: its connection is set up and not paused."""
+        if self.connector_id is None:
+            return True
+        from arqen.connectors.external import connector_by_id
+
+        connector = connector_by_id(self.connector_id)
+        return connector is not None and connector.is_active()
+
+    def credentials(self) -> dict[str, str]:
+        """This tool's connection credentials, read when it runs and never passed to the model."""
+        from arqen.connectors.store import load_credentials
+
+        return load_credentials(self.connector_id) if self.connector_id else {}
 
     def normalize_arguments(self, arguments: dict[str, Any]) -> dict[str, Any]:
         return arguments

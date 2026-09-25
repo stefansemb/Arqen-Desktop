@@ -24,4 +24,7 @@ def sandbox_the_workspace(monkeypatch, tmp_path):
     """
     monkeypatch.setattr(paths, "workspace_root", lambda: Path.cwd().resolve())
     monkeypatch.setattr(paths, "data_dir", lambda: tmp_path / "appdata")
+    # Connection credentials live in the config directory; a test must never
+    # read or overwrite the user's real tokens.
+    monkeypatch.setattr(paths, "config_dir", lambda: tmp_path / "config")
     monkeypatch.setattr(workspace_files, "UNDO", FileUndoStore(tmp_path / "undo"))

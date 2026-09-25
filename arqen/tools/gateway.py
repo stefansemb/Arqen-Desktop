@@ -76,9 +76,23 @@ class ToolGateway:
         if denied:
             result = ExecutionResult(False, f"Tool denied by policy: {tool_name}")
         else:
-            result = self.executor.execute(tool_name, arguments)
+            result = self._redacted(self.executor.execute(tool_name, arguments))
         self._audit(user, agent, tool_name, result)
         return result
+
+    @staticmethod
+    def _redacted(result: ExecutionResult) -> ExecutionResult:
+        """Strip connection credentials from anything a tool sends back.
+
+        Tools read their keys at run time and never receive them as arguments,
+        but an error or echoed URL could still carry one to the model.
+        """
+        from arqen.connectors.store import secret_values
+
+        output = result.output
+        for secret in secret_values():
+            output = output.replace(secret, "••••")
+        return result if output == result.output else ExecutionResult(result.ok, output, result.confirmation_required)
 
     def _audit(self, user: str, agent: str, tool_name: str, result: ExecutionResult) -> None:
         if self.audit_path is None:
@@ -97,7 +111,7 @@ class ToolGateway:
 
     def confirm_pending(self, accepted: bool, *, user: str = "local", agent: str = "default") -> ExecutionResult:
         pending = self.executor._pending
-        result = self.executor.confirm_pending(accepted)
+        result = self._redacted(self.executor.confirm_pending(accepted))
         if pending is not None:
             self._audit(user, agent, pending[0], result)
         return result

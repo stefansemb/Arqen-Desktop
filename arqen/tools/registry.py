@@ -33,6 +33,8 @@ class ToolRegistry:
         """Return a compact, provider-neutral description of available tools."""
         lines = []
         for tool in self._tools.values():
+            if not tool.available():
+                continue
             arguments = ", ".join(
                 f"{name}: {kind.__name__}"
                 for name, kind in tool.arguments_schema.items()

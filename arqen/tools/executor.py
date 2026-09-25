@@ -21,6 +21,8 @@ class ToolExecutor:
         tool = self.registry.get(name)
         if tool is None:
             return ExecutionResult(False, f"Unknown tool: {name}")
+        if not tool.available():
+            return ExecutionResult(False, f"{name} needs a connection that is not set up or is paused (see Anslutningar).")
         arguments = tool.normalize_arguments(arguments or {})
         validation_error = tool.validate_arguments(arguments or {})
         if validation_error:

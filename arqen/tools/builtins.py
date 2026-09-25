@@ -33,6 +33,11 @@ from arqen.tools.browser_tools import (
 )
 from arqen.tools.image_generation import GenerateImageTool
 from arqen.tools.memory_tools import ProposeMemoryTool
+from arqen.tools.github_tools import (
+    GitHubListReposTool, GitHubListIssuesTool, GitHubReadIssueTool,
+    GitHubListPullRequestsTool, GitHubCreateIssueTool,
+)
+from arqen.tools.messaging_tools import DiscordSendMessageTool, TelegramSendMessageTool
 
 
 def create_builtin_registry() -> ToolRegistry:
@@ -73,4 +78,12 @@ def create_builtin_registry() -> ToolRegistry:
     registry.register(BrowserForwardTool())
     registry.register(GenerateImageTool())
     registry.register(ProposeMemoryTool())
+    # Connection tools: registered always, offered only while connected.
+    registry.register(GitHubListReposTool())
+    registry.register(GitHubListIssuesTool())
+    registry.register(GitHubReadIssueTool())
+    registry.register(GitHubListPullRequestsTool())
+    registry.register(GitHubCreateIssueTool())
+    registry.register(DiscordSendMessageTool())
+    registry.register(TelegramSendMessageTool())
     return registry

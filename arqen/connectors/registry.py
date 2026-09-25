@@ -21,6 +21,9 @@ def builtin_connectors(tools: ToolRegistry) -> list[Connector]:
     """The built-in tool groups as connectors, one per catalogue category."""
     grouped: dict[str, list[str]] = {}
     for entry in tools.describe():
+        tool = tools.get(entry["name"])
+        if tool is not None and tool.connector_id:
+            continue  # belongs to its own connection card, not a built-in group
         grouped.setdefault(tool_info(entry["name"]).category, []).append(entry["name"])
     connectors = []
     for category in CATEGORIES:
@@ -43,4 +46,6 @@ def builtin_connectors(tools: ToolRegistry) -> list[Connector]:
 
 def all_connectors(tools: ToolRegistry) -> list[Connector]:
     """Every connector Arqen knows about, built-in first."""
-    return builtin_connectors(tools)
+    from arqen.connectors.external import EXTERNAL
+
+    return builtin_connectors(tools) + list(EXTERNAL)

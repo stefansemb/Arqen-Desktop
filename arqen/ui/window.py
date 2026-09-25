@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from PyQt6.QtWidgets import (
+    QApplication,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -69,6 +70,8 @@ from arqen.tools.builtins import create_builtin_registry
 from arqen.ui.strings import status_label, tr, tr_status
 from arqen.ui.tool_catalog import CATEGORIES, ToolInfo, tool_info
 from arqen.connectors import GrantState, all_connectors, grant_state, with_connector, without_connector
+from arqen.connectors import store as connector_store
+from arqen.connectors.external import EXTERNAL
 from arqen.ui.theme import CyberpunkGreenTheme, VoicePalette, load_voice_palette
 from arqen.core.provider_metrics import ProviderMetrics
 from arqen.core.memory_store import MemoryStore
@@ -1901,10 +1904,23 @@ class ArqenWindow(QMainWindow):
         name.setStyleSheet("color: #f2f0eb; font-weight: bold; font-size: 13px;")
         heading.addWidget(name)
         heading.addStretch(1)
-        chip = QLabel(tr("BUILT-IN") if connector.builtin else tr("CONNECTED"))
-        chip.setStyleSheet("color: #8d969d; border: 1px solid #30383a; border-radius: 8px; padding: 1px 7px; font-size: 9px;")
+        if connector.builtin:
+            chip_text, chip_color = tr("BUILT-IN"), "#8d969d"
+        elif not connector.is_connected():
+            chip_text, chip_color = tr("NOT CONNECTED"), "#8d969d"
+        elif connector.is_paused():
+            chip_text, chip_color = tr("PAUSED"), "#ffd166"
+        else:
+            chip_text, chip_color = tr("CONNECTED"), "#b7ff18"
+        chip = QLabel(chip_text)
+        chip.setStyleSheet(f"color: {chip_color}; border: 1px solid {chip_color}; border-radius: 8px; padding: 1px 7px; font-size: 9px;")
         heading.addWidget(chip)
         card_layout.addLayout(heading)
+        if not connector.builtin:
+            manage = QPushButton(tr("MANAGE") if connector.is_connected() else tr("+ CONNECT"))
+            self._style_page_action(manage, primary=not connector.is_connected())
+            manage.clicked.connect(lambda _, item=connector: self._open_connector_dialog(item))
+            card_layout.addWidget(manage, alignment=Qt.AlignmentFlag.AlignLeft)
 
         description = QLabel(connector.description)
         description.setWordWrap(True)
@@ -1939,6 +1955,159 @@ class ArqenWindow(QMainWindow):
             footer.addWidget(remove)
         card_layout.addLayout(footer)
         return card
+
+    def _open_connector_dialog(self, connector) -> None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle(tr("{name} – connection", name=connector.name))
+        dialog.setMinimumWidth(520)
+        layout = QVBoxLayout(dialog)
+        intro = QLabel(connector.description)
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+        form = QFormLayout()
+        saved = connector_store.load_credentials(connector.id)
+        inputs: dict[str, QLineEdit] = {}
+        for item in connector.fields:
+            field_input = QLineEdit(saved.get(item.name, ""))
+            field_input.setPlaceholderText(item.placeholder)
+            if item.secret:
+                field_input.setEchoMode(QLineEdit.EchoMode.Password)
+            form.addRow(item.label, field_input)
+            if item.help:
+                hint = QLabel(item.help)
+                hint.setWordWrap(True)
+                hint.setStyleSheet("color: #8d969d; font-size: 11px;")
+                form.addRow("", hint)
+            inputs[item.name] = field_input
+        layout.addLayout(form)
+        settings = connector_store.load_settings(connector.id)
+        notify = None
+        if connector.notify is not None:
+            notify = QCheckBox(tr("Notify here when tasks finish or fail"))
+            notify.setChecked(bool(settings.get("notify", False)))
+            layout.addWidget(notify)
+        paused = QCheckBox(tr("Pause the connection (agents cannot use it)"))
+        paused.setChecked(bool(settings.get("paused", False)))
+        layout.addWidget(paused)
+        result = QLabel("")
+        result.setWordWrap(True)
+        layout.addWidget(result)
+
+        def values() -> dict[str, str]:
+            return {name: field_input.text().strip() for name, field_input in inputs.items()}
+
+        def test() -> None:
+            current = values()
+            if not all(current.values()):
+                result.setStyleSheet("color: #ffd166;")
+                result.setText(tr("Fill in every field first."))
+                return
+            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+            try:
+                reached = connector.test(current) if connector.test else ""
+                result.setStyleSheet("color: #b7ff18;")
+                result.setText(tr("Works: {reached}", reached=reached))
+            except Exception as exc:
+                result.setStyleSheet("color: #ff6b6b;")
+                result.setText(tr("Did not work: {error}", error=self._scrub(str(exc), current)))
+            finally:
+                QApplication.restoreOverrideCursor()
+
+        def save() -> None:
+            current = values()
+            if not all(current.values()):
+                result.setStyleSheet("color: #ffd166;")
+                result.setText(tr("Fill in every field first."))
+                return
+            connector_store.save_credentials(connector.id, current)
+            changes = {"paused": paused.isChecked()}
+            if notify is not None:
+                changes["notify"] = notify.isChecked()
+            connector_store.save_settings(connector.id, **changes)
+            dialog.accept()
+
+        def disconnect() -> None:
+            answer = QMessageBox.question(
+                dialog, tr("Disconnect"), tr("Remove the saved credentials for {name}?", name=connector.name),
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if answer == QMessageBox.StandardButton.Yes:
+                connector_store.forget_credentials(connector.id)
+                dialog.accept()
+
+        buttons = QHBoxLayout()
+        test_button = QPushButton(tr("TEST CONNECTION"))
+        save_button = QPushButton(tr("SAVE"))
+        self._style_page_action(test_button)
+        self._style_page_action(save_button, primary=True)
+        test_button.clicked.connect(test)
+        save_button.clicked.connect(save)
+        buttons.addWidget(test_button)
+        if connector.is_connected():
+            disconnect_button = QPushButton(tr("DISCONNECT"))
+            self._style_page_action(disconnect_button)
+            disconnect_button.clicked.connect(disconnect)
+            buttons.addWidget(disconnect_button)
+        buttons.addStretch(1)
+        close = QPushButton(tr("CLOSE"))
+        self._style_page_action(close)
+        close.clicked.connect(dialog.reject)
+        buttons.addWidget(save_button)
+        buttons.addWidget(close)
+        layout.addLayout(buttons)
+        for button in (test_button, save_button, close):
+            button.setAutoDefault(False)
+        dialog.exec()
+        self._refresh_connection_cards()
+        if hasattr(self, "tools_stack"):
+            self._refresh_tools_view()
+
+    @staticmethod
+    def _scrub(text: str, credentials: dict[str, str]) -> str:
+        """Keep typed-in credentials out of any message shown on screen."""
+        for value in credentials.values():
+            if len(value) >= 6:
+                text = text.replace(value, "••••")
+        return text
+
+    def _notify_task_changes(self) -> None:
+        """Tell connected Discord/Telegram when a task finishes or fails, if asked to."""
+        store = getattr(self, "mission_store", None)
+        if store is None:
+            return
+        tasks = store.list_tasks()
+        seen = getattr(self, "_task_status_seen", None)
+        self._task_status_seen = {task.id: task.status for task in tasks}
+        if seen is None:
+            return  # the first look only remembers; old tasks are not announced
+        finished = [task for task in tasks if task.status in {"completed", "failed"} and seen.get(task.id) != task.status]
+        targets = [
+            connector for connector in EXTERNAL
+            if connector.notify is not None and connector.is_active()
+            and connector_store.load_settings(connector.id).get("notify", False)
+        ]
+        if not finished or not targets:
+            return
+        lines = []
+        for task in finished:
+            agent = store.get_agent(task.agent_id) if task.agent_id else None
+            who = f" ({agent.name})" if agent else ""
+            if task.status == "completed":
+                lines.append(tr("Done: {title}{who}", title=task.title, who=who))
+            else:
+                lines.append(tr("Failed: {title}{who} – {error}", title=task.title, who=who, error=(task.error or "")[:200]))
+        message = "Arqen\n" + "\n".join(lines)
+        jobs = [(connector.notify, connector_store.load_credentials(connector.id)) for connector in targets]
+
+        def send() -> None:
+            for notify, credentials in jobs:
+                try:
+                    notify(credentials, message)
+                except Exception as exc:
+                    # A failed notice must never disturb the app; it only goes to the console.
+                    print(f"Notification failed: {type(exc).__name__}", flush=True)
+
+        threading.Thread(target=send, daemon=True, name="arqen-notify").start()
 
     def _set_connector_access(self, connector_id: str, grant: bool) -> None:
         agent = self._selected_connection_agent()
@@ -2058,6 +2227,7 @@ class ArqenWindow(QMainWindow):
         self.mission_activity_timer.timeout.connect(self.refresh_mission_approvals)
         self.mission_activity_timer.timeout.connect(self._refresh_approval_bar)
         self.mission_activity_timer.timeout.connect(lambda: self._refresh_memory_badge())
+        self.mission_activity_timer.timeout.connect(self._notify_task_changes)
         self.mission_activity_timer.start()
         panel_layout.addWidget(QLabel(tr("SCHEDULES")))
         legacy_schedules = QListWidget()

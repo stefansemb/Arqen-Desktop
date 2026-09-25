@@ -81,29 +81,32 @@ def save_provider_config(config: ProviderConfig, path: Path | None = None) -> No
     config_path.parent.mkdir(parents=True, exist_ok=True)
     profile = {key: value for key, value in asdict(config).items() if key != "api_key"}
     profile["model"] = re.sub(r"^\[[^\]]+\]\s*", "", str(profile["model"]))
-    data: dict = {
+    # Start from what is on disk: other parts of Arqen keep their own keys in
+    # these files (theme, mission, connectors, connector credentials), and
+    # rewriting them from scratch here used to delete all of that on Save.
+    data: dict = {}
+    if config_path.exists():
+        try:
+            data = json.loads(config_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            data = {}
+    providers_profiles = data.get("providers", {}) if isinstance(data.get("providers"), dict) else {}
+    providers_profiles[config.name] = profile
+    data.update({
         "provider": profile,
         "profile": config.profile_name,
-        "providers": {config.name: profile},
+        "providers": providers_profiles,
+        # The fallback block is whatever was just saved.  Keeping the old
+        # one froze it at its first value: it could be switched on once and
+        # never changed or switched off again from the dialog.
         "fallback": {
             "enabled": config.fallback_enabled,
             "provider": config.fallback_provider,
             "timeout": config.fallback_timeout,
         },
-        "workspace": "",
-    }
-    if config_path.exists():
-        try:
-            old = json.loads(config_path.read_text(encoding="utf-8"))
-            data["providers"] = old.get("providers", {})
-            data["providers"][config.name] = profile
-            # The fallback block is whatever was just saved.  Keeping the old
-            # one froze it at its first value: it could be switched on once and
-            # never changed or switched off again from the dialog.
-            # Saving a provider must not reset which folder Arqen works in.
-            data["workspace"] = old.get("workspace", "")
-        except (OSError, json.JSONDecodeError):
-            pass
+    })
+    # Saving a provider must not reset which folder Arqen works in.
+    data.setdefault("workspace", "")
     config_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
     secrets_path = config_path.parent / "arqen-secrets.json"
     secrets: dict = {}
@@ -112,9 +115,10 @@ def save_provider_config(config: ProviderConfig, path: Path | None = None) -> No
             secrets = json.loads(secrets_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             secrets = {}
-    providers = secrets.get("providers", {})
+    providers = secrets.get("providers", {}) if isinstance(secrets.get("providers"), dict) else {}
     providers[config.name] = config.api_key
-    secrets_path.write_text(json.dumps({"providers": providers}, indent=2) + "\n", encoding="utf-8")
+    secrets["providers"] = providers
+    secrets_path.write_text(json.dumps(secrets, indent=2) + "\n", encoding="utf-8")
 
 
 def load_workspace_root(path: Path | None = None) -> Path:

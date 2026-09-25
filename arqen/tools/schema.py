@@ -32,6 +32,10 @@ def build_tool_schemas(registry: ToolRegistry, names: Iterable[str] | None = Non
     for tool in registry.describe():
         if selected is not None and tool["name"] not in selected:
             continue
+        # A connection tool is only offered while its connection is active.
+        implementation = registry.get(tool["name"])
+        if implementation is not None and not implementation.available():
+            continue
         properties = {
             name: {"type": _json_type(kind)}
             for name, kind in _argument_types(registry, tool["name"]).items()
@@ -67,7 +71,8 @@ def build_relevant_tool_schemas(
     complete catalogue is retained rather than risking a missing capability.
     Tools already used during this turn are always retained.
     """
-    entries = registry.describe()
+    entries = [entry for entry in registry.describe()
+               if (tool := registry.get(entry["name"])) is None or tool.available()]
     if len(entries) <= limit:
         return build_tool_schemas(registry)
 

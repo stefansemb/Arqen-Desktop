@@ -211,7 +211,7 @@ def test_a_spent_tool_budget_still_ends_in_words(tmp_path, monkeypatch) -> None:
 
 
 def test_only_irreversible_tools_ask_for_confirmation() -> None:
-    """Writing files, spending money and ending processes ask; nothing else does."""
+    """Writing files, spending money, ending processes and posting to outside services ask."""
     from arqen.tools.builtins import create_builtin_registry
 
     gated = {tool["name"] for tool in create_builtin_registry().describe() if tool["requires_confirmation"]}
@@ -222,4 +222,7 @@ def test_only_irreversible_tools_ask_for_confirmation() -> None:
         "undo_workspace_file_change",
         "generate_image",
         "close_program",
+        "github_create_issue",
+        "discord_send_message",
+        "telegram_send_message",
     }
