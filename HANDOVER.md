@@ -95,6 +95,21 @@ Utveckla minnet mot ett lokalt, kontrollerbart retain/recall/reflect-system:
 Hindsight och agentmemory är inspirationskällor. Börja lokalt och stegvis utan
 att införa en tung extern databas direkt.
 
+**Status 2026-09-25:**
+
+- Klart: `retain` med källa, proveniens, status och confidence
+  (`arqen/core/memory_store.py`).
+- Klart: `recall` används i varje tur. Upp till 12 godkända minnen skickas alla
+  med; fler filtreras mot senaste meddelandet (svenska stoppord bort, böjningar
+  matchas via prefix) och modellen får veta att det är ett urval. Minnesdelen
+  av systemmeddelandet byts ut per tur, så det förblir ett enda.
+- Klart: bara godkända minnen presenteras som "User-approved memory".
+- Delvis: Memory-vyn kan redigera och ta bort, men inte ändra status.
+- Kvar: flöde där Arqen *föreslår* minnen som användaren godkänner.
+- Kvar: `reflect` räknar bara status; den sammanfattar inga lärdomar än.
+- Kvar vid behov: bättre matchning än ord (t.ex. embeddings) om minnet växer
+  sig stort.
+
 ### 2. Arqen Tool Gateway
 
 Bygg ett lokalt verktygs- och nyckelproxy-lager:
@@ -108,6 +123,15 @@ Bygg ett lokalt verktygs- och nyckelproxy-lager:
 Börja som en intern modul/tjänst i Arqen. Det bör prioriteras högt eftersom det
 ger säkerhets-, kostnads- och integrationsgrund för framtida agentfunktioner.
 
+**Status 2026-09-25:**
+
+- Klart: register med risknivå, regler per agent (`ToolPolicy`) och auditlogg i
+  `data/tool-audit.jsonl` (`arqen/tools/gateway.py`).
+- Klart: UI i Verktyg-vyn med katalog, agentregler och logg.
+- Kvar: kostnad per anrop i auditloggen.
+- Kvar: nyckelhantering via gatewayn. Nycklarna ligger i `arqen-secrets.json`
+  och läses direkt av providers; gatewayn injicerar inga hemligheter än.
+
 ## Medvetna val
 
 - **Fallback är avstängt** i `config/arqen.json` medan modeller utvärderas, så
@@ -119,7 +143,7 @@ ger säkerhets-, kostnads- och integrationsgrund för framtida agentfunktioner.
 
 ## Teststatus
 
-63 tester, alla gröna. Kör efter ändringar:
+125 tester, alla gröna. Kör efter ändringar:
 
 ```powershell
 python -m compileall -q arqen

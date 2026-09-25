@@ -1,9 +1,44 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from arqen.config import paths
+
+# Words that say nothing about what a memory is about.  Without them "vad
+# heter min hund" would match every memory that also contains "min".
+_STOPWORDS = frozenset("""
+    att av den det din där efter eller en ett för från har hon han hur här
+    inte jag kan med men mig min mina mitt nu när och om på sig sin som
+    till under upp ut vad var vem vi vid vår är även också ska skulle vill
+    the and for are you your with that this what who how was have has not
+""".split())
+
+
+def _terms(text: str) -> set[str]:
+    """The content words of ``text``, lowercased, without stopwords."""
+    return {
+        word for word in re.findall(r"\w+", text.casefold())
+        if len(word) >= 3 and word not in _STOPWORDS and not word.isdigit()
+    }
+
+
+def _overlap(query: set[str], content: set[str]) -> int:
+    """How many query words appear in the content, counting inflections.
+
+    Swedish inflects by adding endings, so "hunden" should find "hund":
+    a word of four letters or more matches any word it is a prefix of,
+    or that is a prefix of it.
+    """
+    matched = 0
+    for term in query:
+        for word in content:
+            if term == word or (min(len(term), len(word)) >= 4
+                                and (term.startswith(word) or word.startswith(term))):
+                matched += 1
+                break
+    return matched
 
 
 @dataclass
@@ -60,12 +95,26 @@ class MemoryStore:
     def remember(self, fact: str) -> None:
         self.retain(fact)
 
-    def recall(self, query: str = "", *, limit: int | None = None) -> list[Memory]:
-        words = {word.casefold() for word in query.split() if len(word) > 2}
-        records = [item for item in self.records() if item.status != "obsolete"]
-        if words:
-            records = [item for item in records if words & set(item.content.casefold().split())]
-        records.sort(key=lambda item: item.confidence, reverse=True)
+    def recall(self, query: str = "", *, limit: int | None = None,
+               include_proposed: bool = False) -> list[Memory]:
+        """Approved memories relevant to ``query``, best match first.
+
+        Proposed memories are left out unless asked for: only what the user
+        approved may be presented to the model as memory.  With no query every
+        approved memory is returned, ordered by confidence.
+        """
+        allowed = {"approved", "proposed"} if include_proposed else {"approved"}
+        records = [item for item in self.records() if item.status in allowed]
+        if query.strip():
+            # A query made only of stopwords has nothing to match, which is
+            # not the same as no query: it recalls nothing rather than all.
+            terms = _terms(query)
+            scored = [(_overlap(terms, _terms(item.content)), item) for item in records]
+            scored = [(score, item) for score, item in scored if score]
+            scored.sort(key=lambda pair: (pair[0], pair[1].confidence), reverse=True)
+            records = [item for _, item in scored]
+        else:
+            records.sort(key=lambda item: item.confidence, reverse=True)
         return records[:limit] if limit is not None else records
 
     def reflect(self) -> dict[str, int]:

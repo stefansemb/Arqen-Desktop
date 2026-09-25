@@ -1,5 +1,6 @@
 import re
 import json
+from dataclasses import replace
 
 from arqen.core.contracts import Message, ToolRequest, Usage
 from arqen.core.tool_protocol import parse_tool_request
@@ -62,11 +63,38 @@ class ConversationEngine:
         self.voice_enabled = False
         self.last_response_speakable = False
 
-    def _ensure_system_context(self) -> None:
-        if self.messages:
+    # Up to this many approved memories all of them go along: filtering only
+    # pays off once memory grows, and below it word matching cannot miss one.
+    MEMORY_PROMPT_LIMIT = 12
+    _MEMORY_HEADING = "\n\nUser-approved memory:\n"
+
+    def _memory_context(self, prompt: str) -> str:
+        approved = self.memory_store.recall()
+        if len(approved) <= self.MEMORY_PROMPT_LIMIT:
+            return "\n".join(f"- {item.content}" for item in approved) or "none"
+        relevant = self.memory_store.recall(prompt, limit=self.MEMORY_PROMPT_LIMIT)
+        # Say that this is a selection, so an empty one is not read as
+        # "nothing is remembered" and the model does not deny what it has.
+        note = (
+            f"({len(relevant)} of {len(approved)} stored memories, chosen as relevant "
+            "to the latest message; the rest exist but are not shown.)"
+        )
+        lines = [f"- {item.content}" for item in relevant]
+        return "\n".join([note, *lines])
+
+    def _refresh_memory_context(self, memory_context: str) -> None:
+        """Swap the memory section of the existing system message for this turn's."""
+        first = self.messages[0]
+        if first.role != "system" or self._MEMORY_HEADING not in first.content:
             return
-        memories = self.memory_store.list()
-        memory_context = "\n".join(f"- {item}" for item in memories) or "none"
+        head = first.content.split(self._MEMORY_HEADING, 1)[0]
+        self.messages[0] = replace(first, content=head + self._MEMORY_HEADING + memory_context)
+
+    def _ensure_system_context(self, prompt: str = "") -> None:
+        memory_context = self._memory_context(prompt)
+        if self.messages:
+            self._refresh_memory_context(memory_context)
+            return
         if getattr(self.provider, "supports_tools", False):
             # The tools are attached to the request itself, so describing an
             # envelope here only competes with the native calling convention
@@ -94,7 +122,7 @@ class ConversationEngine:
                     "Never claim to remember a person, fact, or note unless it appears in User-approved memory. "
                     "Do not invent memory entries or say that notes were saved without an explicit memory command."
                     f"{tool_catalogue}"
-                    f"\n\nUser-approved memory:\n{memory_context}"
+                    f"{self._MEMORY_HEADING}{memory_context}"
                 ),
             )
         )
@@ -111,7 +139,7 @@ class ConversationEngine:
             return "Röstläge avstängt."
         if (voice_command.startswith("säg ") or voice_command.startswith("sag ")) and not self.voice_enabled:
             return "Röstläge är avstängt. Slå på 🔊 för att använda uppläsning."
-        self._ensure_system_context()
+        self._ensure_system_context(prompt)
         memory_response = self._handle_memory_command(prompt)
         if memory_response is not None:
             self.messages.append(Message(role="user", content=prompt))
