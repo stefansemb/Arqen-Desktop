@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import (
     QMainWindow,
     QPushButton,
     QTextEdit,
+    QPlainTextEdit,
     QVBoxLayout,
     QWidget,
     QInputDialog,
@@ -106,6 +107,69 @@ class ChatBackgroundTextEdit(QTextEdit):
             palette.setBrush(QPalette.ColorRole.Base, QBrush(scaled))
             self.viewport().setPalette(palette)
         super().resizeEvent(event)
+
+
+class ChatInput(QPlainTextEdit):
+    """The message box: Enter sends, Shift+Enter starts a new line.
+
+    It keeps the QLineEdit calls the window already uses (``text``,
+    ``setText``, ``returnPressed``) and grows with its text up to a few lines,
+    after which it scrolls.
+    """
+
+    returnPressed = pyqtSignal()
+    MAX_LINES = 6
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("chatInput")
+        self.setTabChangesFocus(True)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.document().contentsChanged.connect(self._fit_height)
+        self._fit_height()
+
+    def text(self) -> str:
+        return self.toPlainText()
+
+    def setText(self, text: str) -> None:
+        self.setPlainText(text)
+        self.moveCursor(self.textCursor().MoveOperation.End)
+
+    def keyPressEvent(self, event) -> None:
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+                # A plain "\n": Qt's own Shift+Enter inserts a line separator
+                # (U+2028) that would reach the model as an odd character.
+                self.insertPlainText("\n")
+            else:
+                self.returnPressed.emit()
+            return
+        super().keyPressEvent(event)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        # Wrapping depends on the width, so the height follows it.
+        self._fit_height()
+
+    def _fit_height(self) -> None:
+        # Resizing calls this again; without the guard, and with a height taken
+        # from the current geometry, the two fed each other until the stack ran out.
+        if getattr(self, "_fitting", False):
+            return
+        self._fitting = True
+        try:
+            # With the plain-text layout the document height is counted in lines.
+            lines = max(1, min(self.MAX_LINES, int(self.document().size().height())))
+            text_height = lines * self.fontMetrics().lineSpacing() + 2 * self.document().documentMargin()
+            margins = self.contentsMargins()
+            viewport = self.viewportMargins()
+            chrome = 2 * self.frameWidth() + margins.top() + margins.bottom() + viewport.top() + viewport.bottom()
+            height = int(text_height + chrome)
+            if height != self.height():
+                self.setFixedHeight(height)
+        finally:
+            self._fitting = False
 
 
 class ResponseWorker(QObject):
@@ -819,8 +883,14 @@ class ArqenWindow(QMainWindow):
         chat_surface_layout.addWidget(placeholder_label, 0, 0)
         self.output.textChanged.connect(lambda: placeholder_label.setVisible(not bool(self.output.toPlainText())))
         input_row = QHBoxLayout()
-        self.input = QLineEdit()
-        self.input.setPlaceholderText(tr("Type a message..."))
+        self.input = ChatInput()
+        self.input.setPlaceholderText(tr("Type a message... (Shift+Enter for a new line)"))
+        # Matches the single-line field it replaced, which took its look from the theme.
+        self.input.setStyleSheet(
+            f"QPlainTextEdit#chatInput {{ background: {CyberpunkGreenTheme.panel_alt}; "
+            f"border: 1px solid {CyberpunkGreenTheme.border}; border-radius: 6px; padding: 5px 4px; "
+            f"color: {CyberpunkGreenTheme.text}; }}"
+        )
         self.microphone_status.connect(lambda text: self.set_status(tr_status(text)))
         self.microphone_status.connect(self._on_microphone_status)
         self.microphone_result.connect(self._handle_microphone_result)

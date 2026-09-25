@@ -34,7 +34,7 @@ _SV: dict[str, str] = {
         "Högerklicka för att öppna, byta namn eller ta bort. F2 byter namn, Delete tar bort.",
     "Open": "Öppna",
     "Conversation will appear here...": "Konversationen visas här...",
-    "Type a message...": "Skriv ett meddelande...",
+    "Type a message... (Shift+Enter for a new line)": "Skriv ett meddelande... (Shift+Enter för ny rad)",
     "Send": "Skicka",
     "Stop": "Stoppa",
     "CONFIRM": "BEKRÄFTA",
