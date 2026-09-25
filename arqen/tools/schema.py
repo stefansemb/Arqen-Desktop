@@ -61,35 +61,63 @@ def build_tool_schemas(registry: ToolRegistry, names: Iterable[str] | None = Non
     return schemas
 
 
+def _words(text: str) -> set[str]:
+    return set(re.findall(r"[\wåäöÅÄÖ-]{3,}", text.casefold()))
+
+
 def build_relevant_tool_schemas(
     registry: ToolRegistry,
     context: str,
     already_used: Iterable[str] = (),
     limit: int = 12,
+    focus: str = "",
 ) -> list[dict[str, Any]]:
     """Select a conservative subset of schemas for a long tool catalogue.
 
     Short catalogues remain unchanged. For larger ones, tools are ranked by
-    words shared with the user's context. If no useful signal is found, the
-    complete catalogue is retained rather than risking a missing capability.
-    Tools already used during this turn are always retained.
+    words shared with ``focus`` (the latest request) and, far more weakly,
+    with ``context`` (the rest of the conversation).  A word counts less the
+    more tools it appears in, so a word like "Arqen" that half the catalogue
+    mentions cannot crowd out "telegram", and a word in a tool's own name
+    counts most.  If no useful signal is found, the complete catalogue is
+    retained rather than risking a missing capability.  Tools already used
+    during this turn are always retained.
     """
     entries = [entry for entry in registry.describe()
                if (tool := registry.get(entry["name"])) is None or tool.available()]
     if len(entries) <= limit:
         return build_tool_schemas(registry)
 
-    words = set(re.findall(r"[\wåäöÅÄÖ-]{3,}", context.casefold()))
-    used = set(already_used)
-    ranked: list[tuple[int, dict[str, Any]]] = []
-    for entry in entries:
-        searchable = " ".join((entry["name"], entry["description"], *entry["arguments"])).casefold()
-        score = sum(1 for word in words if word in searchable)
-        if entry["name"] in used:
-            score += 100
-        ranked.append((score, entry))
+    searchable = {
+        entry["name"]: " ".join((entry["name"], entry["description"], *entry["arguments"])).casefold()
+        for entry in entries
+    }
 
-    matches = [entry for score, entry in ranked if score > 0]
+    def found(word: str, text: str) -> bool:
+        # Swedish inflections: "kalendern", "filerna" and "mejlen" should find
+        # "kalender", "filer" and "mejl".
+        return word in text or (len(word) >= 6 and word[:-2] in text)
+
+    def score(words: set[str], name: str) -> float:
+        total = 0.0
+        for word in words:
+            if not found(word, searchable[name]):
+                continue
+            spread = sum(found(word, text) for text in searchable.values())
+            total += (3.0 if found(word, name.casefold()) else 1.0) / spread
+        return total
+
+    focus_words, context_words = _words(focus), _words(context)
+    used = set(already_used)
+    ranked: list[tuple[float, dict[str, Any]]] = []
+    for entry in entries:
+        # The latest request decides; the conversation only breaks ties.
+        value = 10 * score(focus_words, entry["name"]) + score(context_words, entry["name"])
+        if entry["name"] in used:
+            value += 1000
+        ranked.append((value, entry))
+
+    matches = [entry for value, entry in ranked if value > 0]
     if not matches:
         return build_tool_schemas(registry)
     selected = [entry["name"] for _, entry in sorted(ranked, key=lambda item: item[0], reverse=True)[:limit]]

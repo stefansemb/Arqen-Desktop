@@ -55,6 +55,12 @@ Reserven är fortfarande avstängd medan modeller utvärderas.
 
 Verktygsscheman väljs redan per tur (`build_relevant_tool_schemas`, högst 12 plus
 de som alltid erbjuds), så alla 36 skickas inte längre varje gång.
+Rangordningen styrs av senaste meddelandet (`focus`); resten av samtalet,
+utan systemmeddelandet, väger en tiondel. Ett ord väger mindre ju fler verktyg
+det finns hos, en träff i verktygets namn väger tre gånger mer, och böjda ord
+matchar på stammen ("kalendern" → "kalender"). Tidigare vägde hela samtalet
+inklusive systemmeddelandet lika, och "Arqen" (hos 19 verktyg) trängde ut
+Telegram ur topp 12.
 
 ## Kontrollrum (Mission Control) – aktuellt läge
 
@@ -260,7 +266,7 @@ Faser:
 
 ## Teststatus
 
-191 tester, alla gröna. Kör efter ändringar:
+195 tester, alla gröna. Kör efter ändringar:
 
 ```powershell
 python -m compileall -q arqen

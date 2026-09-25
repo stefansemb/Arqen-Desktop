@@ -189,7 +189,10 @@ class ConversationEngine:
         native = getattr(self.provider, "supports_tools", False)
         tools = build_relevant_tool_schemas(
             self.tools,
-            "\n".join(message.content for message in self.messages),
+            # The system message names Arqen and much else; it says nothing
+            # about what this turn needs.
+            "\n".join(message.content for message in self.messages if message.role != "system"),
+            focus=prompt,
             already_used=(message.tool_calls[0].get("function", {}).get("name", "")
                           for message in self.messages
                           if message.role == "assistant" and message.tool_calls),
