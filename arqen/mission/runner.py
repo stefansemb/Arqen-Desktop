@@ -31,7 +31,9 @@ class MissionRunner:
             if isinstance(runtime, ArqenRuntime):
                 agent = self.store.get_agent(task.agent_id) if task.agent_id else None
                 try:
-                    result = runtime.run(task.prompt, agent.allowed_tools if agent and agent.allowed_tools else None,
+                    # An agent's list is its whole allowance, even when empty;
+                    # only a task without an agent runs with every tool.
+                    result = runtime.run(task.prompt, agent.allowed_tools if agent else None,
                                          agent.approval_tools if agent else None,
                                          lambda action, payload: (_ for _ in ()).throw(ApprovalRequired(action, payload)))
                 except ApprovalRequired as approval:

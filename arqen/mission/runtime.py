@@ -40,7 +40,10 @@ class ArqenRuntime:
             engine.new_session()
         # The limits below change the engine itself, so the factory must hand
         # out a fresh engine per task and never the one the user chats with.
-        if allowed_tools:
+        # None means no limit; an empty tuple means no tools at all.  Treating
+        # "empty" as "unlimited" handed every tool to an agent whose last one
+        # was taken away.
+        if allowed_tools is not None and hasattr(engine, "tools"):
             engine.tools._tools = {name: tool for name, tool in engine.tools._tools.items() if name in allowed_tools}
             # Keep the policy boundary active even for direct/internal tool
             # requests that bypass the model's reduced schema catalogue.

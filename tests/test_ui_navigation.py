@@ -24,10 +24,10 @@ def test_mission_control_navigation_is_complete():
     )
     expected = {
         "Dashboard", "Chat", "Mission Control", "Tasks", "Workflows",
-            "Schedules", "Agents", "Activity", "Memory", "Tools", "Content", "Settings",
+            "Schedules", "Agents", "Activity", "Memory", "Tools", "Content", "Connections", "Settings",
     }
     assert set(window.navigation_buttons) == expected
-    assert window.navigation_stack.count() == 11
+    assert window.navigation_stack.count() == 12
     window.close()
     app.quit()
 

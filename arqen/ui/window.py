@@ -45,6 +45,7 @@ from PyQt6.QtGui import (
 from urllib.request import Request, urlopen
 import json
 import html
+from dataclasses import replace as replace_dataclass
 import math
 import re
 import threading
@@ -67,6 +68,7 @@ from arqen.providers.factory import create_provider
 from arqen.tools.builtins import create_builtin_registry
 from arqen.ui.strings import status_label, tr, tr_status
 from arqen.ui.tool_catalog import CATEGORIES, ToolInfo, tool_info
+from arqen.connectors import GrantState, all_connectors, grant_state, with_connector, without_connector
 from arqen.ui.theme import CyberpunkGreenTheme, VoicePalette, load_voice_palette
 from arqen.core.provider_metrics import ProviderMetrics
 from arqen.core.memory_store import MemoryStore
@@ -823,7 +825,7 @@ class ArqenWindow(QMainWindow):
         for label, icon in (("Dashboard", "⌂"), ("Chat", "◌"), ("Mission Control", "◈")):
             self._add_navigation_button(navigation_layout, label, icon)
         navigation_layout.addWidget(QLabel(tr("SYSTEM"), objectName="navSection"))
-        for label, icon in (("Agents", "♙"), ("Activity", "≋"), ("Memory", "▤"), ("Tools", "⚿")):
+        for label, icon in (("Agents", "♙"), ("Activity", "≋"), ("Memory", "▤"), ("Tools", "⚿"), ("Connections", "⧉")):
             self._add_navigation_button(navigation_layout, label, icon)
         navigation_layout.addWidget(QLabel(tr("OPERATIONS"), objectName="navSection"))
         for label, icon in (("Tasks", "✓"), ("Workflows", "⌘"), ("Schedules", "◷"), ("Content", "◇")):
@@ -965,7 +967,7 @@ class ArqenWindow(QMainWindow):
         dashboard_layout.addWidget(open_chat)
         self.navigation_stack.addWidget(dashboard)
         self.navigation_stack.addWidget(content)
-        for label in ("Tasks", "Workflows", "Schedules", "Agents", "Activity", "Memory", "Tools", "Content"):
+        for label in ("Tasks", "Workflows", "Schedules", "Agents", "Activity", "Memory", "Tools", "Content", "Connections"):
             if label == "Tasks":
                 self._add_tasks_view()
                 continue
@@ -989,6 +991,9 @@ class ArqenWindow(QMainWindow):
                 continue
             if label == "Content":
                 self._add_content_view()
+                continue
+            if label == "Connections":
+                self._add_connections_view()
                 continue
             page = QWidget()
             page_layout = QVBoxLayout(page)
@@ -1777,6 +1782,179 @@ class ArqenWindow(QMainWindow):
             MemoryStore().forget(fact)
             self._refresh_memory_view()
 
+    _CONNECTION_COLUMNS = 3
+
+    def _add_connections_view(self) -> None:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(8)
+        layout.addWidget(QLabel(tr("CONNECTIONS"), objectName="title"))
+        layout.addWidget(QLabel(tr("Give an agent access to a package of tools. More integrations are coming."), objectName="status"))
+        controls = QHBoxLayout()
+        controls.setSpacing(8)
+        controls.addWidget(QLabel(tr("AGENT"), objectName="sectionLabel"))
+        self.connections_agent = QComboBox()
+        self.connections_agent.setMinimumWidth(260)
+        self.connections_agent.currentIndexChanged.connect(lambda _: self._refresh_connection_cards())
+        controls.addWidget(self.connections_agent)
+        controls.addStretch(1)
+        self.connections_search = QLineEdit()
+        self.connections_search.setPlaceholderText(tr("Search connections..."))
+        self.connections_search.setClearButtonEnabled(True)
+        self.connections_search.setFixedWidth(260)
+        self.connections_search.textChanged.connect(lambda _: self._refresh_connection_cards())
+        controls.addWidget(self.connections_search)
+        layout.addLayout(controls)
+        self.connections_summary = QLabel("")
+        self.connections_summary.setStyleSheet("color: #9fce20; font-size: 11px;")
+        layout.addWidget(self.connections_summary)
+        host = QWidget()
+        self.connections_grid = QGridLayout(host)
+        self.connections_grid.setContentsMargins(0, 0, 6, 0)
+        self.connections_grid.setSpacing(10)
+        self.connections_grid.setAlignment(Qt.AlignmentFlag.AlignTop)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setWidget(host)
+        layout.addWidget(scroll, 1)
+        self.navigation_stack.addWidget(page)
+
+    def _refresh_connections_view(self) -> None:
+        if not hasattr(self, "connections_agent"):
+            return
+        store = getattr(self, "mission_store", None)
+        agents = sorted(store.list_agents(), key=lambda agent: agent.name.lower()) if store is not None else []
+        selected = self.connections_agent.currentData()
+        self.connections_agent.blockSignals(True)
+        self.connections_agent.clear()
+        for agent in agents:
+            self.connections_agent.addItem(f"{agent.name} — {agent.role}", agent.id)
+        index = self.connections_agent.findData(selected)
+        self.connections_agent.setCurrentIndex(index if index >= 0 else 0)
+        self.connections_agent.blockSignals(False)
+        self._refresh_connection_cards()
+
+    def _selected_connection_agent(self):
+        store = getattr(self, "mission_store", None)
+        agent_id = self.connections_agent.currentData() if hasattr(self, "connections_agent") else None
+        return store.get_agent(agent_id) if store is not None and agent_id else None
+
+    def _refresh_connection_cards(self) -> None:
+        if not hasattr(self, "connections_grid"):
+            return
+        self._clear_layout(self.connections_grid)
+        agent = self._selected_connection_agent()
+        if agent is None:
+            self.connections_summary.setText(tr("No agents yet. Create one under Agents."))
+            return
+        connectors = all_connectors(self.engine.tools)
+        total = sum(len(connector.tools) for connector in connectors)
+        granted = sum(tool in agent.allowed_tools for connector in connectors for tool in connector.tools)
+        if granted:
+            self.connections_summary.setText(tr("{agent} can use {count} of {total} tools.", agent=agent.name, count=granted, total=total))
+        else:
+            self.connections_summary.setText(tr("{agent} has no tools and can only answer in text.", agent=agent.name))
+        query = self.connections_search.text().casefold().strip()
+        shown = [
+            connector for connector in connectors
+            if not query or query in " ".join(
+                (connector.name, connector.description, *(tool_info(tool).title for tool in connector.tools))
+            ).casefold()
+        ]
+        if not shown:
+            empty = QLabel(tr("No connections match the search."))
+            empty.setStyleSheet("color: #8d969d; padding: 12px 2px;")
+            self.connections_grid.addWidget(empty, 0, 0)
+            return
+        for index, connector in enumerate(shown):
+            self.connections_grid.addWidget(
+                self._connection_card(connector, agent),
+                index // self._CONNECTION_COLUMNS, index % self._CONNECTION_COLUMNS,
+            )
+        for column in range(self._CONNECTION_COLUMNS):
+            self.connections_grid.setColumnStretch(column, 1)
+        # Spare height goes below the last row, so cards keep their natural size.
+        rows = (len(shown) + self._CONNECTION_COLUMNS - 1) // self._CONNECTION_COLUMNS
+        for row in range(self.connections_grid.rowCount()):
+            self.connections_grid.setRowStretch(row, 1 if row == rows else 0)
+        self.connections_grid.setRowStretch(rows, 1)
+
+    def _connection_card(self, connector, agent) -> QFrame:
+        state = grant_state(connector, agent.allowed_tools)
+        border = {GrantState.FULL: "#b7ff18", GrantState.PARTIAL: "#6b7a2a"}.get(state, "#30383a")
+        card = QFrame(objectName="connectionCard")
+        card.setStyleSheet(f"QFrame#connectionCard {{ background: #171d21; border: 1px solid {border}; border-radius: 8px; }}")
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(12, 10, 12, 10)
+        card_layout.setSpacing(4)
+
+        heading = QHBoxLayout()
+        heading.setSpacing(10)
+        badge = QLabel(connector.badge)
+        badge.setFixedSize(30, 30)
+        badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        badge.setStyleSheet("color: #d8ff75; background: #111516; border: 1px solid #30383a; border-radius: 6px; font-weight: bold;")
+        heading.addWidget(badge)
+        name = QLabel(connector.name)
+        name.setStyleSheet("color: #f2f0eb; font-weight: bold; font-size: 13px;")
+        heading.addWidget(name)
+        heading.addStretch(1)
+        chip = QLabel(tr("BUILT-IN") if connector.builtin else tr("CONNECTED"))
+        chip.setStyleSheet("color: #8d969d; border: 1px solid #30383a; border-radius: 8px; padding: 1px 7px; font-size: 9px;")
+        heading.addWidget(chip)
+        card_layout.addLayout(heading)
+
+        description = QLabel(connector.description)
+        description.setWordWrap(True)
+        description.setStyleSheet("color: #c4cec9; font-size: 11px;")
+        card_layout.addWidget(description)
+        tools = QLabel(" · ".join(tool_info(tool).title for tool in connector.tools))
+        tools.setWordWrap(True)
+        tools.setStyleSheet("color: #657078; font-size: 10px;")
+        card_layout.addWidget(tools)
+        card_layout.addStretch(1)
+
+        footer = QHBoxLayout()
+        count = sum(tool in agent.allowed_tools for tool in connector.tools)
+        status_text = {
+            GrantState.FULL: tr("All {count} tools", count=len(connector.tools)),
+            GrantState.PARTIAL: tr("{count} of {total} tools", count=count, total=len(connector.tools)),
+            GrantState.NONE: tr("{count} tools", count=len(connector.tools)),
+        }[state]
+        status = QLabel(status_text)
+        status.setStyleSheet(f"color: {'#9fce20' if state is not GrantState.NONE else '#8d969d'}; font-size: 10px;")
+        footer.addWidget(status)
+        footer.addStretch(1)
+        if state is not GrantState.FULL:
+            grant = QPushButton(tr("GIVE {agent} ACCESS", agent=agent.name.upper()) if state is GrantState.NONE else tr("GIVE ALL"))
+            self._style_page_action(grant, primary=True)
+            grant.clicked.connect(lambda _, cid=connector.id: self._set_connector_access(cid, True))
+            footer.addWidget(grant)
+        if state is not GrantState.NONE:
+            remove = QPushButton(tr("REMOVE"))
+            self._style_page_action(remove)
+            remove.clicked.connect(lambda _, cid=connector.id: self._set_connector_access(cid, False))
+            footer.addWidget(remove)
+        card_layout.addLayout(footer)
+        return card
+
+    def _set_connector_access(self, connector_id: str, grant: bool) -> None:
+        agent = self._selected_connection_agent()
+        connector = next((item for item in all_connectors(self.engine.tools) if item.id == connector_id), None)
+        if agent is None or connector is None:
+            return
+        change = with_connector if grant else without_connector
+        tools = change(connector, agent.allowed_tools)
+        # Approval rules only make sense for tools the agent still has.
+        approvals = tuple(tool for tool in agent.approval_tools if tool in tools)
+        self.mission_store.save_agent(replace_dataclass(agent, allowed_tools=tools, approval_tools=approvals))
+        self._refresh_connection_cards()
+        self.refresh_mission_agents()
+        if hasattr(self, "tools_stack"):
+            self._refresh_tools_view()
+
     def _add_content_view(self) -> None:
         page = QWidget()
         page_layout = QVBoxLayout(page)
@@ -1823,7 +2001,7 @@ class ArqenWindow(QMainWindow):
                 "QPushButton { background: transparent; color: #8d969d; border: none; "
                 "text-align: left; padding: 7px 8px; border-radius: 5px; }"
             )
-        pages = {"Dashboard": 0, "Chat": 1, "Tasks": 2, "Workflows": 3, "Schedules": 4, "Agents": 5, "Activity": 6, "Memory": 7, "Tools": 8, "Content": 9, "Mission Control": getattr(self, "mission_page_index", 0)}
+        pages = {"Dashboard": 0, "Chat": 1, "Tasks": 2, "Workflows": 3, "Schedules": 4, "Agents": 5, "Activity": 6, "Memory": 7, "Tools": 8, "Content": 9, "Connections": 10, "Mission Control": getattr(self, "mission_page_index", 0)}
         if name in pages and hasattr(self, "navigation_stack"):
             self.navigation_stack.setCurrentIndex(pages[name])
             if name == "Memory":
@@ -1832,6 +2010,8 @@ class ArqenWindow(QMainWindow):
                 self._refresh_tools_view()
             elif name == "Content":
                 self._refresh_content_view()
+            elif name == "Connections":
+                self._refresh_connections_view()
 
     def _create_mission_dock(self) -> None:
         """Create the first functional Mission Control surface."""
@@ -2460,7 +2640,9 @@ class ArqenWindow(QMainWindow):
         agent = self.mission_store.get_agent(agent_id)
         if agent is None:
             return
-        self.mission_store.save_agent(Agent(agent.id, agent.name, agent.role, agent.runtime, not agent.enabled))
+        # replace() keeps the tools and approval rules; building a new Agent here
+        # used to drop them, so toggling emptied the agent's allowance.
+        self.mission_store.save_agent(replace_dataclass(agent, enabled=not agent.enabled))
         self.refresh_mission_agents()
 
     def _edit_mission_agent(self) -> None:

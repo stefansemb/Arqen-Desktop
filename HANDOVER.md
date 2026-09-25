@@ -156,6 +156,43 @@ ger säkerhets-, kostnads- och integrationsgrund för framtida agentfunktioner.
 - Kvar: nyckelhantering via gatewayn. Nycklarna ligger i `arqen-secrets.json`
   och läses direkt av providers; gatewayn injicerar inga hemligheter än.
 
+### 3. Anslutningar (verktygsarsenal) – fas 1 klar
+
+Beslutad och fas 1 byggd 2026-09-25. Inspirerad av en "Tool armory": ett rutnät
+med integrationer som ansluts och delas ut till agenter.
+
+**Status fas 1:** `arqen/connectors/` (Connector, tilldelningslogik och
+registret) och vyn *Anslutningar* under System. De inbyggda verktygsgrupperna
+byggs ur kategorierna i `tool_catalog.py`; agentväljaren ger GE TILLGÅNG / GE
+ALLA / TA BORT per kort och sparar i agentens `allowed_tools` (godkänneregler
+för borttagna verktyg rensas). Chatten har fortfarande alla verktyg; att välja
+"Arqen (chatten)" i väljaren återstår. En agents tomma verktygslista betyder nu
+*inga* verktyg (tidigare *alla*), och AKTIVERA/INAKTIVERA behåller agentens
+verktyg (tömde dem tidigare).
+
+Plan för helheten:
+
+- **Anslutning = paket:** en fil per integration i `arqen/connectors/` med namn,
+  kategori, beskrivning, inloggningssätt (ingen, token/API-nyckel, OAuth,
+  MCP-adress) och de verktyg den ger. Skriv-/publiceringsverktyg kräver
+  godkännande som standard.
+- **Nycklar via Tool Gateway:** token sparas i `arqen-secrets.json` och fylls i
+  av gatewayn först när verktyget körs; aldrig i prompt, verktygsresultat eller
+  logg. Detta är samtidigt Tool Gatewayens kvarvarande nyckelhantering.
+- **Vy:** egen menypost *Anslutningar* under System. Kort med sökning och status
+  (Ansluten, Pausad, Behöver återanslutas, + Anslut); anslut-dialog med
+  TESTA ANSLUTNING. Neutrala bokstavsikoner, inga varumärkeslogotyper.
+- **Agentval överst:** varje kort får "Ge <agent> tillgång". Ersätter på sikt
+  kommafältet i Redigera agent. De inbyggda verktygsgrupperna visas som kort.
+
+Faser:
+
+1. Ramverk, vy och agentval med de inbyggda verktygsgrupperna. **Klar.**
+2. Första integrationer: **GitHub** (personlig token) och **Discord/Telegram**
+   (webhook/bot för aviseringar, t.ex. när en uppgift är klar).
+3. Google via OAuth (Gmail, Kalender, Drive) och en MCP-klient som öppnar
+   många verktyg via en anslutning.
+
 ## Medvetna val
 
 - **Fallback är avstängt** i `config/arqen.json` medan modeller utvärderas, så
@@ -167,7 +204,7 @@ ger säkerhets-, kostnads- och integrationsgrund för framtida agentfunktioner.
 
 ## Teststatus
 
-141 tester, alla gröna. Kör efter ändringar:
+147 tester, alla gröna. Kör efter ändringar:
 
 ```powershell
 python -m compileall -q arqen
