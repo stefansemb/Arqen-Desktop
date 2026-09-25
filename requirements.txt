@@ -9,3 +9,4 @@ kokoro>=0.9.4
 soundfile>=0.12,<1
 sounddevice>=0.5,<1
 faster-whisper>=1.1,<2
+edge-tts>=7,<8

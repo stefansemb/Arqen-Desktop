@@ -18,7 +18,8 @@ gammal utcheckning med egen `data/`; en `git pull` där gör den till Kontrollru
 - Chattar sparas, öppnas, döps om och tas bort från chattlistan i Chatt-vyn.
 - Ollama, OpenRouter, OpenAI, Gemini och Claude stöds.
 - API-nycklar sparas separat per provider. Modeller och providerprofiler sparas.
-- Profiler: Lokal/Ollama, Snabb/OpenRouter, Viktigt/OpenAI, Kreativt/OpenRouter.
+- Profiler: Privat/Ollama, Snabb/OpenRouter (mimo-v2.6-pro), Viktigt/OpenAI
+  (gpt-5.6), Kreativt/Gemini (gemini-3.1-flash-lite).
 - Streaming, nativa verktygsanrop och avbrytning mot OpenAI-kompatibla moln.
 - Verktygsloopen kör upp till 16 steg per tur. Tar budgeten slut ställs en sista
   fråga utan verktyg, så turen alltid slutar i ord och aldrig i rå verktygsutdata.
@@ -166,7 +167,7 @@ ger säkerhets-, kostnads- och integrationsgrund för framtida agentfunktioner.
 
 ## Teststatus
 
-137 tester, alla gröna. Kör efter ändringar:
+141 tester, alla gröna. Kör efter ändringar:
 
 ```powershell
 python -m compileall -q arqen

@@ -348,6 +348,7 @@ _SV: dict[str, str] = {
     "Local Ollama": "Lokal Ollama",
     "Private – Ollama": "Privat – Ollama",
     "Fast – OpenRouter": "Snabb – OpenRouter",
+    "Creative – Gemini": "Kreativt – Gemini",
     "Description": "Beskrivning",
     "Local and private. Uses Ollama without cloud fallback.": "Lokal och privat. Använder Ollama utan reserv i molnet.",
     "Fast everyday profile. Uses OpenRouter without automatic fallback.": "Snabb vardagsprofil. Använder OpenRouter utan automatisk reserv.",

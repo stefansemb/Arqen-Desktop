@@ -88,5 +88,21 @@ specifik version. Adaptern ska kunna:
 
 En användare kan skapa en task, se den i statuslistan, låta en lokal agent
 köra den, följa activity events, fånga ett fel och återuppta eller avsluta
-tasken utan att behöva läsa terminalens rålogg. Alla 64 befintliga tester ska
+tasken utan att behöva läsa terminalens rålogg. Alla befintliga tester ska
 fortsätta passera.
+
+## Status 2026-09-25
+
+Första milstolpen är nådd. Mission Control heter **Kontrollrum** i gränssnittet.
+
+- Kontrakt, SQLite-lager, bridge, activity, dispatch och approvals finns i
+  `arqen/mission/`; alla 141 tester passerar.
+- Varje task körs i en egen `ConversationEngine`, så agentens verktygsregler
+  aldrig påverkar chatten, och task-samtal sparas separat
+  (`data/mission-sessions`).
+- Approvals syns i en godkännanderad i alla vyer; ett avslag avbryter tasken.
+- Scheduler och task-worker körs i desktop-appen; timeout, recovery, retry och
+  borttagning finns.
+- Hermes-adaptern finns som `HermesRuntime` i `arqen/mission/runtime.py`. Den är
+  opt-in och kopplas in via `mission`-avsnittet i `config/arqen.json`, men bara
+  av den lokala API-servern. Desktop-appen kör än så länge bara Arqen-runtime.

@@ -3503,7 +3503,8 @@ class ArqenWindow(QMainWindow):
         profile.addItem(tr("Private – Ollama"), "private")
         profile.addItem(tr("Fast – OpenRouter"), "fast")
         profile.addItem("Viktigt – OpenAI", "important")
-        profile.addItem("Kreativt arbete – OpenRouter", "creative")
+        # The creative preset runs on Gemini; the label used to say OpenRouter.
+        profile.addItem(tr("Creative – Gemini"), "creative")
         saved_profile = {"private": "private", "fast": "fast", "important": "important", "creative": "creative"}.get(config.profile_name, "")
         if saved_profile:
             profile.setCurrentIndex(profile.findData(saved_profile))

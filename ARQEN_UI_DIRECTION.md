@@ -3,28 +3,29 @@
 ## Mål
 
 Arqen ska kännas som ett lugnt, premium operatörsgränssnitt för agenter och
-workflows. Dashboarden ska visa systemets läge utan att chatten tar över.
+arbetsflöden. Översikten ska visa systemets läge utan att chatten tar över.
 
 ## Layout
 
 ```text
 ┌──────────────┬──────────────────────────────┬─────────────────┐
-│ Navigation   │ Aktiv vy                     │ Agent-chat      │
-│              │ Dashboard / Tasks / Agents   │ drawer, vid     │
-│              │                              │ behov           │
+│ Navigation   │ Godkännanderad (vid behov)   │ Röstpanel       │
+│              ├──────────────────────────────┤ (ring, mikrofon,│
+│              │ Aktiv vy                     │  röst)          │
+│              │ Översikt / Chatt / Uppgifter │─────────────────│
+│              │ / Agenter / Minne / ...      │ Statistik       │
 └──────────────┴──────────────────────────────┴─────────────────┘
 ```
 
-Huvudmeny:
+Röst- och statistikpanelen är dockade till höger och kan lossas. Godkännanderaden
+syns överst i alla vyer bara när något väntar på användaren.
 
-- Dashboard
-- Tasks
-- Workflows
-- Agents
-- Activity
-- Memory
-- Content
-- Settings
+Huvudmeny (i gränssnittet på svenska):
+
+- **Översikt:** Översikt, Chatt, Kontrollrum
+- **System:** Agenter, Aktivitet, Minne, Verktyg
+- **Drift:** Uppgifter, Arbetsflöden, Scheman, Innehåll
+- Inställningar längst ner
 
 ## Visuellt språk
 
@@ -34,38 +35,36 @@ Huvudmeny:
 - röd/gul endast för fel och väntande beslut
 - ingen stor dekorativ bakgrund bakom chatten
 - låg visuell brusnivå och konsekvent spacing
+- svenska i hela gränssnittet
 
-## Chat
+## Chatt
 
-Chatten ska öppnas som en separat högerpanel när användaren väljer Arqen eller
-en specialistagent. Den ska inte ligga permanent över dashboardens huvudyta.
+Chatten är en egen vy med en chattlista till vänster (öppna, byt namn, ta bort)
+och konversationen till höger. Ursprungsplanen var en utfällbar högerpanel; den
+platsen används nu av röst- och statistikpanelen. Agenter kan öppna chatten från
+sina kort.
 
-## Implementationsordning
+## Implementationsordning (genomförd)
 
 1. Ta bort chat-bakgrunden.
 2. Skapa navigationsskal och vyväxling.
 3. Flytta Mission Control-panelerna till separata vyer.
-4. Lägg till agent-chat som drawer.
-5. Lägg Settings i navigationen.
-6. Förfina spacing, typography och statusfärger.
+4. Lägg till chatt från agentkort.
+5. Lägg Inställningar i navigationen.
+6. Förfina spacing, typografi och statusfärger.
 
-## Nästa UI-iteration: kompakt Arqen Voice-panel
+## Röstpanelen (genomförd 2026-09-25)
 
 Inspirerad av JARVIS-gränssnittet i `jarvis-claude-code`, men anpassad till
-Arqen.
+Arqen:
 
-- Behåll nuvarande huvudmeny och navigation.
-- Gör om Voice-panelens utseende till en kompakt, sleek ringbaserad panel.
-- Placera Voice-panelen på högersidan.
-- Behåll och återanvänd den befintliga ljudvågsanimeringen i den nya ringen.
-- Visa `ARQEN` i mitten i stället för J.A.R.V.I.S.
-- Lägg till tydliga statuslägen: idle, lyssnar, tänker och pratar.
-- Vid tänkande: en markerad del av ringen snurrar runt.
-- Vid tal: en liten grön indikator lyser och en annan del av ringen får en
-  separat talfärg, exempelvis orange.
-- Gör färgerna konfigurerbara via Arqens tema.
-- Placera Stats-panelen under eller intill Voice-panelen på högersidan.
-- Utvärdera helheten innan fler visuella element tas bort eller läggs till.
+- Kompakt ringbaserad panel till höger med `ARQEN` i mitten.
+- Den tidigare ljudvågen ligger lindad runt kärnan.
+- Lägena vila, lyssnar, tänker och pratar. Vid tänkande snurrar en markerad del
+  av ringen; vid tal lyser en grön indikator och en orange talbåge följer rösten.
+- Färgerna är konfigurerbara via Arqens tema (`VoicePalette`).
+- Mikrofon- och röstknapparna sitter under ringen.
+- Statistikpanelen ligger under röstpanelen med samma yta och palett.
 
-Första implementeringsordningen är Voice-panelen, därefter placering och
-förfining av Stats-panelen.
+Nästa steg för gränssnittet utvärderas mot helheten innan fler visuella element
+läggs till eller tas bort.
