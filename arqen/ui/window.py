@@ -1586,6 +1586,13 @@ class ArqenWindow(QMainWindow):
         if not entries:
             self.tools_log.addItem(tr("No tool calls logged yet."))
             return
+        costs = [entry["cost_usd"] for entry in entries if isinstance(entry.get("cost_usd"), (int, float))]
+        if costs:
+            total = QListWidgetItem(tr("Tool costs in this log: {total} over {count} paid calls",
+                                       total=StatsPanelWidget._money(sum(costs)), count=len(costs)))
+            total.setForeground(QColor("#d8ff75"))
+            total.setFlags(Qt.ItemFlag.NoItemFlags)
+            self.tools_log.addItem(total)
         for entry in entries:
             try:
                 moment = datetime.fromisoformat(entry["time"]).astimezone().strftime("%Y-%m-%d  %H:%M:%S")
@@ -1595,7 +1602,9 @@ class ArqenWindow(QMainWindow):
             agent = entry.get("agent", "")
             agent_label = "Arqen" if agent in {"", "default"} else agent
             title = tool_info(entry.get("tool", "")).title
-            item = QListWidgetItem(f"{moment}   {tr(f'audit:{status}'):<12}{title}  ·  {agent_label}")
+            cost = entry.get("cost_usd")
+            cost_label = f"  ·  {StatsPanelWidget._money(cost)}" if isinstance(cost, (int, float)) else ""
+            item = QListWidgetItem(f"{moment}   {tr(f'audit:{status}'):<12}{title}  ·  {agent_label}{cost_label}")
             item.setForeground(QColor(self._AUDIT_COLORS.get(status, "#c4cec9")))
             item.setToolTip(entry.get("tool", ""))
             self.tools_log.addItem(item)

@@ -53,6 +53,7 @@ _SV: dict[str, str] = {
     "Remove the saved credentials for {name}?": "Ta bort de sparade uppgifterna för {name}?",
     "DISCONNECT": "KOPPLA FRÅN",
     "SIGN IN WITH {name}": "LOGGA IN MED {name}",
+    "Tool costs in this log: {total} over {count} paid calls": "Verktygskostnad i loggen: {total} för {count} betalda anrop",
     "FETCH CHAT ID": "HÄMTA CHATT-ID",
     "Which chat should Arqen use?": "Vilken chatt ska Arqen använda?",
     "Filled in: {value}. Press TEST CONNECTION and SAVE.": "Ifyllt: {value}. Tryck TESTA ANSLUTNING och SPARA.",

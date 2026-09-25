@@ -4,8 +4,9 @@ import uuid
 from pathlib import Path
 from urllib.request import Request, urlopen
 
-from arqen.config.settings import load_api_key, load_provider_profile
+from arqen.config.settings import load_provider_profile
 from arqen.tools.base import Tool
+from arqen.tools.costs import report_cost
 from arqen.config import paths
 
 
@@ -17,7 +18,7 @@ class GenerateImageTool(Tool):
 
     def run(self, arguments: dict) -> str:
         config = load_provider_profile("openrouter")
-        api_key = load_api_key("openrouter")
+        api_key = self.provider_key("openrouter")
         if not api_key:
             raise RuntimeError("OpenRouter API-nyckel saknas")
         encoded = None
@@ -34,6 +35,8 @@ class GenerateImageTool(Tool):
                 with urlopen(request, timeout=config.timeout) as response:
                     data = json.loads(response.read().decode("utf-8"))
                 encoded = data.get("data", [{}])[0].get("b64_json")
+                # OpenRouter's own figure for this image; missing means unknown, not free.
+                report_cost((data.get("usage") or {}).get("cost"))
                 if encoded:
                     break
                 last_error = f"{model} returnerade ingen bild"

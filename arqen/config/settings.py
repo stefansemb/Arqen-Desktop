@@ -11,14 +11,9 @@ DEFAULT_CONFIG = ProviderConfig()
 
 
 def load_api_key(provider_name: str) -> str:
-    secrets_path = config_dir() / "arqen-secrets.json"
-    if not secrets_path.exists():
-        return ""
-    try:
-        secrets = json.loads(secrets_path.read_text(encoding="utf-8"))
-        return str(secrets.get("providers", {}).get(provider_name, secrets.get("api_key", "")))
-    except (OSError, json.JSONDecodeError):
-        return ""
+    from arqen.config.secrets import provider_key
+
+    return provider_key(provider_name)
 
 
 def load_provider_config(path: Path | None = None) -> ProviderConfig:
@@ -34,15 +29,7 @@ def load_provider_config(path: Path | None = None) -> ProviderConfig:
     profiles = data.get("providers", {})
     if provider_name in profiles:
         provider = {**provider, **profiles[provider_name]}
-    secrets_path = config_dir() / "arqen-secrets.json"
-    api_key = ""
-    if secrets_path.exists():
-        try:
-            secrets = json.loads(secrets_path.read_text(encoding="utf-8"))
-            providers = secrets.get("providers", {})
-            api_key = str(providers.get(provider.get("name", DEFAULT_CONFIG.name), secrets.get("api_key", "")))
-        except (OSError, json.JSONDecodeError):
-            api_key = ""
+    api_key = load_api_key(str(provider.get("name", DEFAULT_CONFIG.name)))
     return ProviderConfig(
         name=provider_name,
         base_url=str(provider.get("base_url", DEFAULT_CONFIG.base_url)),

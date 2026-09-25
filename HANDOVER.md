@@ -45,8 +45,9 @@ gammal utcheckning med egen `data/`; en `git pull` där gör den till Kontrollru
 
 ## Viktiga nästa åtgärder
 
-1. Kostnad per anrop och nyckelhantering i Tool Gateway återstår, se status
-   under spåret nedan. Memory 2.0 är i stort sett klart.
+1. Tool Gateway, Memory 2.0 och Anslutningar fas 1–3 är klara. Kvar enligt
+   planen: välj "Arqen (chatten)" i agentväljaren, mobilstödet och bättre
+   webbresearch för Scout (se respektive avsnitt).
 
 Reserven (`FallbackProvider`) har `supports_tools`, `respond_stream` och 90 s
 timeout. Profilval i Inställningar skrev tidigare in 10 s; nu används
@@ -158,9 +159,21 @@ ger säkerhets-, kostnads- och integrationsgrund för framtida agentfunktioner.
 - Klart: register med risknivå, regler per agent (`ToolPolicy`) och auditlogg i
   `data/tool-audit.jsonl` (`arqen/tools/gateway.py`).
 - Klart: UI i Verktyg-vyn med katalog, agentregler och logg.
-- Kvar: kostnad per anrop i auditloggen.
-- Kvar: nyckelhantering via gatewayn. Nycklarna ligger i `arqen-secrets.json`
-  och läses direkt av providers; gatewayn injicerar inga hemligheter än.
+- Klart: kostnad per anrop i auditloggen. Ett verktyg rapporterar tjänstens
+  egen siffra med `report_cost` (`arqen/tools/costs.py`, via en ContextVar);
+  gatewayn summerar det som rapporteras under anropet, även vid godkännande,
+  och skriver `cost_usd` i `tool-audit.jsonl`. Saknas siffran skrivs ingen
+  kostnad (okänt, inte gratis). `generate_image` rapporterar OpenRouters
+  `usage.cost`. Logg-fliken visar kostnad per rad och en summa överst.
+- Klart: nyckelhantering. All läsning av nycklar går via
+  `arqen/config/secrets.py`. Providers får sin nyckel när de byggs (varje
+  modellanrop måste bära den); verktyg läser aldrig filen utan får nyckeln när
+  de körs (`Tool.credentials()` för anslutningar, `Tool.provider_key()` för
+  modellproviders, som `generate_image`). Gatewayn rensar *alla* nycklar i
+  `arqen-secrets.json` ur verktygens svar (tidigare bara anslutningarnas).
+  Filverktygen vägrar läsa, skriva, flytta eller söka i nyckelfilen och kopior
+  med samma namn: den ligger i programmappen, som är standardarbetsyta, så
+  "läs config/arqen-secrets.json" skickade tidigare alla nycklar till modellen.
 
 ### 3. Anslutningar (verktygsarsenal) – fas 1, 2 och 3 byggda
 
@@ -271,7 +284,7 @@ Faser:
 
 ## Teststatus
 
-201 tester, alla gröna. Kör efter ändringar:
+207 tester, alla gröna. Kör efter ändringar:
 
 ```powershell
 python -m compileall -q arqen

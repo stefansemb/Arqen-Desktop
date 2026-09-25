@@ -69,10 +69,7 @@ def save_settings(connector_id: str, **changes) -> None:
 
 
 def secret_values() -> list[str]:
-    """Every stored credential value, for scrubbing tool output."""
-    section = _read("arqen-secrets.json").get("connectors", {})
-    values: list[str] = []
-    for fields in (section.values() if isinstance(section, dict) else ()):
-        if isinstance(fields, dict):
-            values.extend(str(value) for value in fields.values() if len(str(value)) >= 6)
-    return values
+    """Every stored key, connections and model providers alike, for scrubbing tool output."""
+    from arqen.config.secrets import secret_values as every_secret
+
+    return every_secret()

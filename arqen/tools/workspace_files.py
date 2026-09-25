@@ -4,9 +4,16 @@ from typing import Any
 from arqen.tools.base import Tool
 from arqen.core.file_undo import FileUndoStore
 from arqen.config import paths
+from arqen.config.secrets import is_secrets_file
 
 
 UNDO = FileUndoStore()
+
+
+def _guard(*candidates: Path) -> None:
+    """The key file sits in the app folder, which is the default workspace; no tool may touch it."""
+    if any(is_secrets_file(candidate) for candidate in candidates):
+        raise PermissionError("Arqen's key file is off limits to tools.")
 
 
 def describe_size(path: Path) -> str:
@@ -83,6 +90,8 @@ class SearchWorkspaceContentTool(Tool):
                 continue
             if not path.is_file() or path.suffix.lower() not in extensions or path.stat().st_size > 512_000:
                 continue
+            if is_secrets_file(path):
+                continue
             try:
                 lines = path.read_text(encoding="utf-8").splitlines()
             except (OSError, UnicodeDecodeError):
@@ -106,6 +115,7 @@ class ReadWorkspaceFileTool(Tool):
         candidate = (root / arguments["path"]).resolve()
         if root not in candidate.parents and candidate != root:
             raise PermissionError("Path is outside the Arqen workspace")
+        _guard(candidate)
         if not candidate.is_file():
             raise FileNotFoundError(f"File not found: {arguments['path']}")
         if candidate.stat().st_size > 512_000:
@@ -124,6 +134,7 @@ class WriteWorkspaceFileTool(Tool):
         candidate = (root / arguments["path"]).resolve()
         if root not in candidate.parents:
             raise PermissionError("Path is outside the Arqen workspace")
+        _guard(candidate)
         content = arguments["content"]
         if len(content.encode("utf-8")) > 512_000:
             raise ValueError("Content is larger than the 512 KB write limit")
@@ -150,6 +161,7 @@ class DeleteWorkspaceFileTool(Tool):
         candidate = (root / arguments["path"]).resolve()
         if root not in candidate.parents:
             raise PermissionError("Path is outside the Arqen workspace")
+        _guard(candidate)
         if not candidate.is_file():
             raise FileNotFoundError(f"File not found: {arguments['path']}")
         UNDO.snapshot(candidate, operation="delete")
@@ -179,6 +191,7 @@ class MoveWorkspaceFileTool(Tool):
         destination = (root / arguments["destination"]).resolve()
         if root not in source.parents or root not in destination.parents:
             raise PermissionError("Source and destination must be inside the Arqen workspace")
+        _guard(source, destination)
         if not source.is_file():
             raise FileNotFoundError(f"Source file not found: {arguments['source']}")
         if destination.exists():

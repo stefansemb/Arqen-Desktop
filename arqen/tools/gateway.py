@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from arqen.tools.costs import collecting
 from arqen.tools.executor import ExecutionResult, ToolExecutor
 from arqen.config import paths
 
@@ -73,28 +74,30 @@ class ToolGateway:
         denied = tool_name in policy.denied_tools
         if policy.allowed_tools is not None and tool_name not in policy.allowed_tools:
             denied = True
+        costs: list[float] = []
         if denied:
             result = ExecutionResult(False, f"Tool denied by policy: {tool_name}")
         else:
-            result = self._redacted(self.executor.execute(tool_name, arguments))
-        self._audit(user, agent, tool_name, result)
+            with collecting() as costs:
+                result = self._redacted(self.executor.execute(tool_name, arguments))
+        self._audit(user, agent, tool_name, result, costs)
         return result
 
     @staticmethod
     def _redacted(result: ExecutionResult) -> ExecutionResult:
-        """Strip connection credentials from anything a tool sends back.
+        """Strip every stored key from anything a tool sends back.
 
         Tools read their keys at run time and never receive them as arguments,
-        but an error or echoed URL could still carry one to the model.
+        but an error, an echoed URL or a file could still carry one to the
+        model -- connection tokens and model-provider keys alike.
         """
-        from arqen.connectors.store import secret_values
+        from arqen.config.secrets import scrub
 
-        output = result.output
-        for secret in secret_values():
-            output = output.replace(secret, "••••")
+        output = scrub(result.output)
         return result if output == result.output else ExecutionResult(result.ok, output, result.confirmation_required)
 
-    def _audit(self, user: str, agent: str, tool_name: str, result: ExecutionResult) -> None:
+    def _audit(self, user: str, agent: str, tool_name: str, result: ExecutionResult,
+               costs: list[float] | None = None) -> None:
         if self.audit_path is None:
             return
         self.audit_path.parent.mkdir(parents=True, exist_ok=True)
@@ -106,12 +109,16 @@ class ToolGateway:
             "time": datetime.now(timezone.utc).isoformat(),
             "status": "ok" if result.ok else ("approval" if result.confirmation_required else "failed"),
         }
+        if costs:
+            # The services' own figures in USD; absent when the call cost nothing known.
+            entry["cost_usd"] = round(sum(costs), 6)
         with self.audit_path.open("a", encoding="utf-8") as stream:
             stream.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
     def confirm_pending(self, accepted: bool, *, user: str = "local", agent: str = "default") -> ExecutionResult:
         pending = self.executor._pending
-        result = self._redacted(self.executor.confirm_pending(accepted))
+        with collecting() as costs:
+            result = self._redacted(self.executor.confirm_pending(accepted))
         if pending is not None:
-            self._audit(user, agent, pending[0], result)
+            self._audit(user, agent, pending[0], result, costs)
         return result

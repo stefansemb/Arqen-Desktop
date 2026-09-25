@@ -28,6 +28,12 @@ class Tool(ABC):
 
         return load_credentials(self.connector_id) if self.connector_id else {}
 
+    def provider_key(self, provider_name: str) -> str:
+        """A model provider's API key, read when the tool runs and never passed to the model."""
+        from arqen.config.secrets import provider_key
+
+        return provider_key(provider_name)
+
     def normalize_arguments(self, arguments: dict[str, Any]) -> dict[str, Any]:
         return arguments
 
