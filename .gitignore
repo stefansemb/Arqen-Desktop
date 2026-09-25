@@ -12,4 +12,5 @@ data/undo/
 data/*.mp3
 data/provider_metrics.json
 data/mission.sqlite3
+data/tool-audit.jsonl
 backups/

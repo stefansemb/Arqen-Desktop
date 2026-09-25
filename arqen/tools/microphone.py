@@ -18,6 +18,8 @@ class MicrophoneRecorder:
         self._chunks: list[object] = []
         self._lock = threading.Lock()
         self._transcribing = False
+        # Optional live input level (0..1) for visualisation; called from the audio thread.
+        self.on_level: Callable[[float], None] | None = None
 
     @property
     def recording(self) -> bool:
@@ -38,6 +40,13 @@ class MicrophoneRecorder:
                 self.on_status(f"MIC // {status}")
             with self._lock:
                 self._chunks.append(indata.copy())
+            on_level = self.on_level
+            if on_level is not None:
+                try:
+                    rms = float((indata ** 2).mean()) ** 0.5
+                    on_level(min(1.0, rms * 12.0))
+                except Exception:
+                    pass
 
         try:
             self._stream = sd.InputStream(samplerate=16000, channels=1, dtype="float32", callback=callback)

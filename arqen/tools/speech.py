@@ -135,6 +135,27 @@ def _play_wav_with_mci(audio_path: str, generation: int) -> None:
                 _current_alias = None
 
 
+_DEGREES = re.compile(r"(?P<number>[-−]?\d+(?:[.,]\d+)?)?\s*(?:°\s*(?P<unit>[CF])(?:elsius|ahrenheit)?(?![A-Za-zÅÄÖåäö])|(?P<celsius>℃)|(?P<fahrenheit>℉)|°)")
+
+
+def _speak_degrees(text: str) -> str:
+    """Say "13 grader" for ``13 °C``.
+
+    ``°`` is a symbol character and the cleanup below strips symbols, which
+    left the voice reading a bare "C".  Celsius is the default in Swedish
+    speech, so only Fahrenheit is named.
+    """
+
+    def spoken(match: re.Match) -> str:
+        number = (match.group("number") or "").replace("−", "-")
+        word = "grad" if number.lstrip("-") in {"1", "1,0", "1.0"} else "grader"
+        fahrenheit = match.group("unit") == "F" or match.group("fahrenheit")
+        prefix = f"{number} " if number else " "
+        return f"{prefix}{word}{' Fahrenheit' if fahrenheit else ''}"
+
+    return _DEGREES.sub(spoken, text)
+
+
 def _speech_clean(text: str) -> str:
     text = re.sub(r"\[[^\]]*\]\(https?://[^)]*\)", "", text)
     text = re.sub(r"https?://\S+", "", text)
@@ -143,7 +164,9 @@ def _speech_clean(text: str) -> str:
     text = re.sub(r"`([^`]*)`", r"\1", text)
     text = re.sub(r"(\*\*|__|~~|\*|_|#+)", "", text)
     text = re.sub(r"([:/\\|])\1+", " ", text)
-    text = re.sub(r"^\s*[-•]\s*", "", text, flags=re.MULTILINE)
+    # A bullet needs a space after it; "-4 °C" at the start of a line is a minus sign.
+    text = re.sub(r"^\s*[-•]\s+", "", text, flags=re.MULTILINE)
+    text = _speak_degrees(text)
     text = "".join(char for char in text if unicodedata.category(char) not in {"So", "Sk"})
     return re.sub(r"\s+", " ", text).strip()
 

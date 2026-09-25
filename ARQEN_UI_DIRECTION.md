@@ -48,3 +48,24 @@ en specialistagent. Den ska inte ligga permanent över dashboardens huvudyta.
 4. Lägg till agent-chat som drawer.
 5. Lägg Settings i navigationen.
 6. Förfina spacing, typography och statusfärger.
+
+## Nästa UI-iteration: kompakt Arqen Voice-panel
+
+Inspirerad av JARVIS-gränssnittet i `jarvis-claude-code`, men anpassad till
+Arqen.
+
+- Behåll nuvarande huvudmeny och navigation.
+- Gör om Voice-panelens utseende till en kompakt, sleek ringbaserad panel.
+- Placera Voice-panelen på högersidan.
+- Behåll och återanvänd den befintliga ljudvågsanimeringen i den nya ringen.
+- Visa `ARQEN` i mitten i stället för J.A.R.V.I.S.
+- Lägg till tydliga statuslägen: idle, lyssnar, tänker och pratar.
+- Vid tänkande: en markerad del av ringen snurrar runt.
+- Vid tal: en liten grön indikator lyser och en annan del av ringen får en
+  separat talfärg, exempelvis orange.
+- Gör färgerna konfigurerbara via Arqens tema.
+- Placera Stats-panelen under eller intill Voice-panelen på högersidan.
+- Utvärdera helheten innan fler visuella element tas bort eller läggs till.
+
+Första implementeringsordningen är Voice-panelen, därefter placering och
+förfining av Stats-panelen.

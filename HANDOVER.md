@@ -129,16 +129,37 @@ och inte starta tyst.
 
 ## Voice-visualisering
 
-Flytande panel i `arqen/ui/window.py` som `VoiceVisualizationWidget`. Visar
-`data/generated/Arqen Desktop Voice_2.png`, kan flyttas, dockas och stängas, och
-har en ljudnivåstyrd ringpuls. `arqen/tools/speech.py` analyserar Edge TTS-MP3
-via ffmpeg och skickar normaliserad amplitud till widgeten.
+`VoiceVisualizationWidget` i `arqen/ui/window.py` är en kompakt, helt kodmålad
+ring-HUD (ingen PNG längre) inspirerad av JARVIS. Den dockas överst i högerkolumnen
+med Stats-panelen under; båda kan fortfarande lossas och öppnas då där de senast
+flöt. `ARQEN` står i mitten och den gamla ljudvågen är lindad runt kärnan.
 
-Bildriktningen är mörk och lugn: grafitgrå bakgrund, en central limegrön
-soundwave som enda tydligt animerade element, en bred mörkgrå innering med
-diskreta limegröna detaljer, få segmenterade ringar, inga personer eller text.
-Bildmodellen överdriver gärna neon, amplitud och antal ringar — håll prompten
-strikt. Den senaste bilden blev inte som önskat; arbetet är pausat.
+- **idle**: dämpade bågar, långsam drift, svag vågandning.
+- **lyssnar**: cyan ring som andas; vågen följer mikrofonnivån
+  (`MicrophoneRecorder.on_level`).
+- **tänker**: ljus båge med svans snurrar runt huvudringen, plus en motroterande
+  inre båge. Gäller även medan Whisper transkriberar.
+- **pratar**: orange talbåge vars längd följer TTS-nivån, små prickar som löper
+  längs den och en pulserande grön indikator i ONLINE-chippet. Härleds från
+  ljudnivån i `arqen/tools/speech.py`, inte från fönstret.
+
+Färgerna ligger i `VoicePalette` (`arqen/ui/theme.py`) och kan skrivas över i
+`config/arqen.json` under `"theme": {"voice": {"speaking": "#ff9f1c", ...}}`.
+Ogiltiga hexfärger ignoreras. Mikrofon- och röstknapparna sitter under ringen.
+
+Stats-panelen ligger under Voice-panelen med samma yta och palett: sessionens
+kostnad som huvudsiffra, en in/ut-stapel för tokens, tre rutor för senaste
+svaret (tid, tokens, kostnad) och totalen som en rad under.
+
+## Språk
+
+Hela gränssnittet är på svenska, i linje med röst och chatt. Alla texter går via
+`tr()` i `arqen/ui/strings.py`: koden behåller engelska källsträngar som nycklar
+och tabellen ger den svenska texten. Status för tasks och events sparas på
+engelska i databasen och översätts först när de visas (`status_label`), så
+lagring, tester och logik är språkneutrala. Kod, loggar och tester är på
+engelska. Ny text i UI:t ska läggas in i tabellen i stället för att skrivas
+direkt i `window.py`.
 
 ## Mobilstöd
 

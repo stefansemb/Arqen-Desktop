@@ -28,11 +28,23 @@ from PyQt6.QtWidgets import (
     QFileDialog,
     QDialogButtonBox,
 )
-from PyQt6.QtCore import QEvent, QObject, QSettings, QThread, QTimer, Qt, QUrl, QPoint, QSize, pyqtSignal, pyqtSlot
-from PyQt6.QtGui import QColor, QBrush, QPainter, QPalette, QPen, QPixmap
+from PyQt6.QtCore import QEvent, QObject, QSettings, QThread, QTimer, Qt, QUrl, QPoint, QPointF, QRectF, QSize, pyqtSignal, pyqtSlot
+from PyQt6.QtGui import (
+    QBrush,
+    QColor,
+    QFont,
+    QFontMetricsF,
+    QPainter,
+    QPalette,
+    QPen,
+    QPixmap,
+    QPolygonF,
+    QRadialGradient,
+)
 from urllib.request import Request, urlopen
 import json
 import html
+import math
 import re
 import threading
 import time
@@ -50,7 +62,8 @@ from arqen.config.settings import (
 from arqen.config.paths import APP_ROOT, config_dir, data_dir, workspace_root
 from arqen.providers.config import ProviderConfig
 from arqen.providers.factory import create_provider
-from arqen.ui.theme import CyberpunkGreenTheme
+from arqen.ui.strings import status_label, tr, tr_status
+from arqen.ui.theme import CyberpunkGreenTheme, VoicePalette, load_voice_palette
 from arqen.core.provider_metrics import ProviderMetrics
 from arqen.core.memory_store import MemoryStore
 from arqen.tools.speech import set_audio_level_callback
@@ -168,108 +181,337 @@ class ConfirmationWorker(QObject):
             self.failed.emit(str(exc))
 
 
-class VoiceVisualizationWidget(QLabel):
-    """Static visual shell; audio-driven animation will be added without changing the dock."""
+class VoiceVisualizationWidget(QWidget):
+    """Compact ring HUD for Arqen's voice: idle, listening, thinking and speaking.
+
+    Everything is painted, so the colours follow ``VoicePalette`` and nothing
+    depends on a generated image.  The window sets the base state; speaking is
+    derived from the TTS audio level, because only playback knows when sound
+    actually starts and stops.
+    """
+
+    STATES = ("idle", "listening", "thinking", "speaking")
+    _LABELS = {"idle": "IDLE", "listening": "LISTENING", "thinking": "THINKING", "speaking": "SPEAKING"}
+    # Short gaps between words must not make the ring flicker back to idle.
+    _SPEECH_HOLD = 0.45
 
     audio_level_changed = pyqtSignal(float)
+    input_level_changed = pyqtSignal(float)
 
-    def __init__(self, image_path: Path, parent: QWidget | None = None) -> None:
+    def __init__(self, palette: VoicePalette | None = None, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self._pixmap = QPixmap(str(image_path))
-        self._pulse_angle = 0.0
+        self.palette_colors = palette or VoicePalette()
+        self._base_state = "idle"
+        self._model_label = ""
         self._audio_level = 0.0
-        self._wave_phase = 0.0
-        self._pulse_timer = QTimer(self)
-        self._pulse_timer.setInterval(40)
-        self._pulse_timer.timeout.connect(self._advance_pulse)
-        self._pulse_timer.start()
+        self._input_level = 0.0
+        self._level = 0.0
+        self._last_speech_at = 0.0
+        self._started = time.monotonic()
+        self._clock = 0.0
+        self._timer = QTimer(self)
+        self._timer.setInterval(33)
+        self._timer.timeout.connect(self._tick)
+        self._timer.start()
         self.audio_level_changed.connect(self._set_audio_level)
-        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.setMinimumHeight(180)
+        self.input_level_changed.connect(self._set_input_level)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self.setStyleSheet("background: #0b0d0e; border: 1px solid #303538; border-radius: 6px;")
-        self._refresh_pixmap()
+        self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent)
 
-    def resizeEvent(self, event) -> None:
-        self._refresh_pixmap()
-        super().resizeEvent(event)
+    # -- state ---------------------------------------------------------------
 
-    def paintEvent(self, event) -> None:
-        super().paintEvent(event)
-        if self._pixmap.isNull():
-            return
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        center = self.rect().center() + QPoint(-5, -5)
-        base_radius = min(self.width(), self.height()) * 0.245
-        import math
+    @property
+    def state(self) -> str:
+        if time.monotonic() - self._last_speech_at < self._SPEECH_HOLD:
+            return "speaking"
+        return self._base_state
 
-        idle_pulse = (math.sin(self._pulse_angle) + 1.0) / 2.0 * 0.08
-        pulse = max(idle_pulse, self._audio_level)
-        radius = base_radius + pulse * 7.0
-        alpha = int(45 + pulse * 40)
-        pen = QPen(QColor(183, 255, 24, alpha), 3.0)
-        painter.setPen(pen)
-        painter.drawEllipse(center, int(radius), int(radius))
-        self._paint_dynamic_waveform(painter, center)
-        painter.end()
+    def set_state(self, state: str) -> None:
+        if state not in self.STATES or state == "speaking":
+            raise ValueError(f"unknown base voice state: {state}")
+        if state != self._base_state:
+            self._base_state = state
+            if state != "listening":
+                self._input_level = 0.0
+            self.update()
 
-    def _advance_pulse(self) -> None:
-        self._pulse_angle = (self._pulse_angle + 0.12) % (2 * 3.141592653589793)
-        self._wave_phase = (self._wave_phase + 0.16) % (2 * 3.141592653589793)
+    def set_model_label(self, text: str) -> None:
+        self._model_label = text.strip()
         self.update()
 
     def set_audio_level(self, level: float) -> None:
+        """Thread-safe entry point for the TTS analyser."""
         self.audio_level_changed.emit(level)
+
+    def set_input_level(self, level: float) -> None:
+        """Thread-safe entry point for the microphone."""
+        self.input_level_changed.emit(level)
 
     def _set_audio_level(self, level: float) -> None:
         self._audio_level = level
+        if level > 0.01:
+            self._last_speech_at = time.monotonic()
+        elif level == 0.0:
+            # Playback reports an exact zero when it ends or is stopped.
+            self._last_speech_at = 0.0
+
+    def _set_input_level(self, level: float) -> None:
+        if self._base_state == "listening":
+            self._input_level = level
+
+    def _tick(self) -> None:
+        self._clock = time.monotonic() - self._started
+        state = self.state
+        target = {"speaking": self._audio_level, "listening": self._input_level}.get(state, 0.0)
+        self._level += (target - self._level) * 0.35
         self.update()
 
-    def _paint_dynamic_waveform(self, painter: QPainter, center: QPoint) -> None:
-        """Draw a compact responsive waveform over the baked-in image waveform."""
-        import math
+    # -- painting ------------------------------------------------------------
 
-        width = min(self.width() * 0.52, 235.0)
-        height = min(self.height() * 0.18, 58.0)
-        # Cover only the old baked waveform, leaving the surrounding inner ring visible.
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(7, 11, 10, 225))
-        mask_radius = min(self.width(), self.height()) * 0.255
-        painter.drawEllipse(center, int(mask_radius), int(mask_radius))
-        level = max(0.045, self._audio_level)
-        points = []
-        samples = 96
-        for index in range(samples):
-            position = index / (samples - 1)
-            envelope = math.sin(math.pi * position) ** 0.7
-            texture = (
-                0.48 * math.sin(position * 29.0 + self._wave_phase)
-                + 0.28 * math.sin(position * 61.0 - self._wave_phase * 1.7)
-                + 0.14 * math.sin(position * 113.0 + self._wave_phase * 0.6)
+    @staticmethod
+    def _color(value: str, alpha: int | None = None) -> QColor:
+        color = QColor(value)
+        if alpha is not None:
+            color.setAlpha(max(0, min(255, alpha)))
+        return color
+
+    def _state_color(self, state: str) -> str:
+        colors = self.palette_colors
+        return {"listening": colors.listening, "thinking": colors.thinking}.get(state, colors.accent)
+
+    def paintEvent(self, event) -> None:
+        colors = self.palette_colors
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.fillRect(self.rect(), self._color(colors.background))
+        chip_space = 40
+        radius = max(40.0, min(self.width(), self.height() - chip_space) / 2 - 10)
+        # Ring and chips stay together as one block, sitting just above the
+        # voice controls; spare height becomes headroom under the dock title.
+        top = max(0.0, self.height() - (radius + 10) * 2 - chip_space - 6)
+        center = QPointF(self.width() / 2, top + radius + 10)
+        self._chip_top = center.y() + radius + 16
+        state = self.state
+        tone = self._state_color(state)
+        t = self._clock
+
+        self._paint_ticks(painter, center, radius, tone, state, t)
+        self._paint_outer_arcs(painter, center, radius - 13, tone, t, 200 if state == "idle" else 235)
+        main_radius = radius - 25
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.setPen(QPen(self._color(colors.structure), 1.4))
+        painter.drawEllipse(center, main_radius, main_radius)
+        if state == "thinking":
+            self._paint_thinking_arc(painter, center, main_radius, t)
+        elif state == "speaking":
+            self._paint_speaking_arc(painter, center, main_radius, t)
+        elif state == "listening":
+            breath = (math.sin(t * 3.2) + 1) / 2
+            painter.setPen(QPen(self._color(colors.listening, int(70 + 90 * breath + 90 * self._level)), 2.2))
+            painter.drawEllipse(center, main_radius, main_radius)
+
+        self._paint_dotted_ring(painter, center, radius * 0.68, t)
+        self._paint_ring_waveform(painter, center, radius * 0.52, radius * 0.1, state, t)
+        self._paint_core(painter, center, radius * 0.42, tone, state)
+        self._paint_chips(painter, state, t)
+        painter.end()
+
+    def _paint_ticks(self, painter: QPainter, center: QPointF, radius: float, tone: str, state: str, t: float) -> None:
+        structure = self._color(self.palette_colors.structure)
+        lit = self._color(tone, 170)
+        count = 90
+        # A quiet highlight sweeps the scale; faster while thinking.
+        sweep_head = (t * (0.35 if state == "thinking" else 0.05)) % 1.0
+        for index in range(count):
+            angle = 2 * math.pi * index / count - math.pi / 2
+            major = index % 5 == 0
+            inner = radius - (7.0 if major else 3.5)
+            lit_now = (sweep_head - index / count) % 1.0 < 0.08
+            painter.setPen(QPen(lit if lit_now else structure, 1.4 if major else 1.0))
+            cos, sin = math.cos(angle), math.sin(angle)
+            painter.drawLine(
+                QPointF(center.x() + cos * inner, center.y() + sin * inner),
+                QPointF(center.x() + cos * radius, center.y() + sin * radius),
             )
-            y = center.y() + texture * envelope * level * height
-            x = center.x() - width / 2 + position * width
-            points.append((int(x), int(y)))
-        pen = QPen(QColor(195, 255, 45, int(180 + level * 75)), 2.0)
+
+    @staticmethod
+    def _arc(painter: QPainter, center: QPointF, radius: float, start: float, span: float) -> None:
+        """Draw an arc in degrees, measured clockwise from twelve o'clock."""
+        rect = QRectF(center.x() - radius, center.y() - radius, radius * 2, radius * 2)
+        painter.drawArc(rect, int((90 - start) * 16), int(-span * 16))
+
+    def _paint_outer_arcs(
+        self, painter: QPainter, center: QPointF, radius: float, tone: str, t: float, alpha: int
+    ) -> None:
+        pen = QPen(self._color(tone, alpha), 3.0)
+        pen.setCapStyle(Qt.PenCapStyle.FlatCap)
         painter.setPen(pen)
-        for first, second in zip(points, points[1:]):
-            painter.drawLine(first[0], first[1], second[0], second[1])
-        painter.setPen(QPen(QColor(220, 255, 105, 210), 1.0))
-        mirror = [(x, int(2 * center.y() - y)) for x, y in points]
-        for first, second in zip(mirror, mirror[1:]):
-            painter.drawLine(first[0], first[1], second[0], second[1])
+        drift = t * 4.0
+        for start, span in ((-62, 44), (-8, 26), (148, 58), (222, 20), (262, 34)):
+            self._arc(painter, center, radius, start + drift, span)
+
+    def _paint_thinking_arc(self, painter: QPainter, center: QPointF, radius: float, t: float) -> None:
+        thinking = self.palette_colors.thinking
+        head = (t * 250.0) % 360
+        segments = 18
+        span = 110.0
+        for index in range(segments):
+            # Fade from the bright head into a transparent tail.
+            strength = (index + 1) / segments
+            pen = QPen(self._color(thinking, int(235 * strength ** 1.6)), 4.0)
+            pen.setCapStyle(Qt.PenCapStyle.FlatCap)
+            painter.setPen(pen)
+            self._arc(painter, center, radius, head - span + span * index / segments, span / segments + 0.6)
+        # A dimmer counter-rotating arc on the inside gives the spin depth.
+        painter.setPen(QPen(self._color(thinking, 90), 1.6))
+        self._arc(painter, center, radius - 7, -t * 140.0, 70)
+
+    def _paint_speaking_arc(self, painter: QPainter, center: QPointF, radius: float, t: float) -> None:
+        speaking = self.palette_colors.speaking
+        span = 36 + 70 * min(1.0, self._level * 1.4)
+        start = 90 - span / 2
+        pen = QPen(self._color(speaking, 235), 4.0)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(pen)
+        self._arc(painter, center, radius, start, span)
+        painter.setPen(QPen(self._color(speaking, 110), 1.4))
+        self._arc(painter, center, radius - 7, start + 6, span - 12)
+        # Three small blips run along the arc while speech plays.
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(self._color(speaking, 230))
+        for offset in (0.0, 0.33, 0.66):
+            phase = (t * 0.9 + offset) % 1.0
+            angle = math.radians(start + span * phase - 90)
+            point = QPointF(center.x() + math.cos(angle) * (radius + 7), center.y() + math.sin(angle) * (radius + 7))
+            painter.drawEllipse(point, 1.8, 1.8)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+
+    def _paint_dotted_ring(self, painter: QPainter, center: QPointF, radius: float, t: float) -> None:
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(self._color(self.palette_colors.muted, 150))
+        count = 56
+        rotation = -t * 0.08
+        for index in range(count):
+            angle = 2 * math.pi * index / count + rotation
+            painter.drawEllipse(
+                QPointF(center.x() + math.cos(angle) * radius, center.y() + math.sin(angle) * radius), 1.1, 1.1
+            )
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+
+    def _paint_ring_waveform(
+        self, painter: QPainter, center: QPointF, radius: float, amplitude: float, state: str, t: float
+    ) -> None:
+        """The original soundwave, wrapped around the core instead of drawn across it."""
+        phase = t * 4.8
+        level = max(0.05 + 0.02 * math.sin(t * 1.6), self._level)
+        samples = 160
+        outer, inner = [], []
+        for index in range(samples + 1):
+            theta = 2 * math.pi * index / samples
+            # Integer frequencies keep the wave seamless where it meets itself.
+            texture = (
+                0.48 * math.sin(9 * theta + phase)
+                + 0.28 * math.sin(17 * theta - phase * 1.7)
+                + 0.14 * math.sin(31 * theta + phase * 0.6)
+            )
+            offset = abs(texture) * min(1.0, level) * amplitude * 1.6
+            cos, sin = math.cos(theta - math.pi / 2), math.sin(theta - math.pi / 2)
+            outer.append(QPointF(center.x() + cos * (radius + offset), center.y() + sin * (radius + offset)))
+            inner.append(QPointF(center.x() + cos * (radius - offset * 0.6), center.y() + sin * (radius - offset * 0.6)))
+        wave_tone = self.palette_colors.listening if state == "listening" else self.palette_colors.accent
+        strength = 160 if state == "idle" else 190
+        painter.setPen(QPen(self._color(wave_tone, int(strength + level * 85)), 1.8))
+        painter.drawPolyline(outer)
+        painter.setPen(QPen(self._color(wave_tone, 120), 1.0))
+        painter.drawPolyline(inner)
+
+    def _paint_core(self, painter: QPainter, center: QPointF, radius: float, tone: str, state: str) -> None:
+        colors = self.palette_colors
+        gradient = QRadialGradient(center, radius)
+        gradient.setColorAt(0.0, self._color(tone, 32 if state == "idle" else 60))
+        gradient.setColorAt(1.0, self._color(colors.background))
+        painter.setBrush(gradient)
+        painter.setPen(QPen(self._color(tone, 170 if state == "idle" else 210), 1.4))
+        painter.drawEllipse(center, radius, radius)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+
+        font = QFont("Consolas")
+        font.setBold(True)
+        font.setPixelSize(max(10, int(radius * 0.3)))
+        font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, max(2.0, radius * 0.07))
+        painter.setFont(font)
+        label_rect = QRectF(center.x() - radius, center.y() - radius * 0.4, radius * 2, radius * 0.6)
+        # A soft halo in the state colour, then crisp text on top.
+        painter.setPen(self._color(tone, 80))
+        for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+            painter.drawText(label_rect.translated(dx, dy), Qt.AlignmentFlag.AlignCenter, "ARQEN")
+        painter.setPen(self._color(colors.text))
+        painter.drawText(label_rect, Qt.AlignmentFlag.AlignCenter, "ARQEN")
+
+        small = QFont("Consolas")
+        small.setPixelSize(max(7, int(radius * 0.14)))
+        small.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 1.5)
+        painter.setFont(small)
+        painter.setPen(self._color(colors.speaking if state == "speaking" else tone, 200))
+        painter.drawText(
+            QRectF(center.x() - radius, center.y() + radius * 0.22, radius * 2, radius * 0.3),
+            Qt.AlignmentFlag.AlignCenter,
+            tr(self._LABELS[state]),
+        )
+
+    def _paint_chips(self, painter: QPainter, state: str, t: float) -> None:
+        colors = self.palette_colors
+        font = QFont("Consolas")
+        font.setPixelSize(11)
+        font.setBold(True)
+        font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 1.2)
+        painter.setFont(font)
+        metrics = QFontMetricsF(font)
+        gap = 8
+        labels = [tr("ONLINE")]
+        if self._model_label:
+            # Provider prefixes ("anthropic/...") add nothing in a chip this small.
+            model = self._model_label.rsplit("/", 1)[-1].upper()
+            room = self.width() - 24 - (metrics.horizontalAdvance("ONLINE") + 34) - gap - 34
+            if room > 40:
+                labels.append(metrics.elidedText(model, Qt.TextElideMode.ElideRight, room))
+        widths = [metrics.horizontalAdvance(text) + 34 for text in labels]
+        x = (self.width() - sum(widths) - gap * (len(widths) - 1)) / 2
+        y = getattr(self, "_chip_top", self.height() - 34)
+        for index, (text, width) in enumerate(zip(labels, widths)):
+            rect = QRectF(x, y, width, 24)
+            painter.setBrush(self._color(colors.structure, 90))
+            painter.setPen(QPen(self._color(colors.structure), 1.0))
+            painter.drawRoundedRect(rect, 12, 12)
+            dot = QPointF(rect.left() + 13, rect.center().y())
+            painter.setPen(Qt.PenStyle.NoPen)
+            if index == 0:
+                if state == "speaking":
+                    # The green indicator: lit and softly pulsing while Arqen talks.
+                    glow = (math.sin(t * 9) + 1) / 2
+                    painter.setBrush(self._color(colors.speaking_indicator, int(60 + 80 * glow)))
+                    painter.drawEllipse(dot, 5.5, 5.5)
+                    painter.setBrush(self._color(colors.speaking_indicator))
+                else:
+                    painter.setBrush(self._color(colors.accent, 120))
+                painter.drawEllipse(dot, 3.2, 3.2)
+                painter.setPen(self._color(colors.text if state == "speaking" else colors.muted))
+            else:
+                painter.setBrush(self._color(colors.accent, 200))
+                painter.drawPolygon(QPolygonF([
+                    QPointF(dot.x(), dot.y() - 3.5), QPointF(dot.x() + 3.5, dot.y()),
+                    QPointF(dot.x(), dot.y() + 3.5), QPointF(dot.x() - 3.5, dot.y()),
+                ]))
+                painter.setPen(self._color(colors.muted))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawText(rect.adjusted(24, 0, -8, 0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, text)
+            x += width + gap
 
     def sizeHint(self) -> QSize:
-        return QSize(400, 300)
+        return QSize(280, 310)
 
     def minimumSizeHint(self) -> QSize:
-        return QSize(300, 220)
-
-    def _refresh_pixmap(self) -> None:
-        if not self._pixmap.isNull():
-            self.setPixmap(self._pixmap.scaled(self.size(), Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation))
-
+        return QSize(220, 250)
 
 
 _EMPHASIS = re.compile(r"\*\*(?P<strong>[^*\n]+?)\*\*|\*(?P<em>[^*\s][^*\n]*?)\*")
@@ -320,54 +562,120 @@ def split_pending(text: str) -> tuple[str, str]:
     return (text[:start], text[start:]) if not after.isspace() else (text, "")
 
 
-class StatsPanelWidget(QWidget):
-    """Tokens and cost for the session, and for everything recorded so far."""
+class UsageSplitBar(QWidget):
+    """A thin bar split between prompt (input) and completion (output) tokens."""
 
-    def __init__(self) -> None:
+    def __init__(self, palette: VoicePalette, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._palette = palette
+        self._input = 0
+        self._output = 0
+        self.setFixedHeight(6)
+
+    def set_split(self, prompt_tokens: int, completion_tokens: int) -> None:
+        self._input, self._output = max(0, prompt_tokens), max(0, completion_tokens)
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        rect = QRectF(self.rect())
+        painter.setBrush(QColor(self._palette.structure))
+        painter.drawRoundedRect(rect, 3, 3)
+        total = self._input + self._output
+        if total:
+            # Output is what the model wrote, so it gets the accent; a sliver
+            # stays visible even when input dwarfs it.
+            share = max(0.02, self._output / total) if self._output else 0.0
+            width = rect.width() * share
+            painter.setBrush(QColor(self._palette.accent))
+            painter.drawRoundedRect(QRectF(rect.right() - width, rect.top(), width, rect.height()), 3, 3)
+        painter.end()
+
+
+class StatsPanelWidget(QWidget):
+    """Tokens and cost: this chat first, the latest response next, the running total last."""
+
+    def __init__(self, palette: VoicePalette | None = None) -> None:
         super().__init__()
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(14, 12, 14, 12)
-        layout.setSpacing(6)
-        self._rows: dict[str, QLabel] = {}
-        self._heading(layout, "CURRENT SESSION")
-        for key, label in (("session_tokens", "Tokens"), ("session_split", "In / out"), ("session_cost", "Cost")):
-            self._row(layout, key, label)
-        layout.addSpacing(8)
-        self._heading(layout, "TOTALT")
-        for key, label in (("total_tokens", "Tokens"), ("total_cost", "Cost")):
-            self._row(layout, key, label)
-        layout.addSpacing(8)
-        self._heading(layout, "LATEST RESPONSE")
-        for key, label in (("last_turn", "Tokens"), ("last_cost", "Cost"), ("last_ms", "Time")):
-            self._row(layout, key, label)
-        layout.addStretch(1)
+        self._palette = palette or VoicePalette()
+        colors = self._palette
+        self.setObjectName("statsPanel")
+        # One surface with the voice panel; also stops the app-wide QWidget
+        # background from painting dark bars behind every label.  A plain
+        # QWidget ignores its stylesheet background without this attribute.
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setStyleSheet(
-            f"background-color: {CyberpunkGreenTheme.panel}; "
-            f"color: {CyberpunkGreenTheme.text};"
+            f"QWidget {{ background: {colors.background}; color: {colors.text}; font-family: Consolas, monospace; }}"
         )
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 10, 16, 14)
+        layout.setSpacing(4)
+
+        layout.addWidget(self._heading(tr("THIS CHAT")))
+        self.session_cost = self._label("—", size=24, color=colors.text, bold=True)
+        layout.addWidget(self.session_cost)
+        self.session_tokens = self._label("—", size=11, color=colors.muted)
+        layout.addWidget(self.session_tokens)
+        layout.addSpacing(8)
+        self.split_bar = UsageSplitBar(colors)
+        layout.addWidget(self.split_bar)
+        split_row = QHBoxLayout()
+        self.split_in = self._label("—", size=10, color=colors.muted)
+        self.split_out = self._label("—", size=10, color=colors.accent)
+        self.split_out.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        split_row.addWidget(self.split_in)
+        split_row.addStretch(1)
+        split_row.addWidget(self.split_out)
+        layout.addLayout(split_row)
+
+        layout.addSpacing(12)
+        layout.addWidget(self._heading(tr("LATEST RESPONSE")))
+        tiles = QHBoxLayout()
+        tiles.setSpacing(6)
+        self.last_values: dict[str, QLabel] = {}
+        for key, caption in (("time", "time"), ("tokens", "tokens"), ("cost", "cost")):
+            tile = QFrame()
+            tile.setObjectName("statTile")
+            tile.setStyleSheet(
+                f"QFrame#statTile {{ border: 1px solid {colors.structure}; border-radius: 6px; }}"
+            )
+            tile_layout = QVBoxLayout(tile)
+            tile_layout.setContentsMargins(8, 6, 8, 6)
+            tile_layout.setSpacing(0)
+            value = self._label("—", size=12, color=colors.text, bold=True)
+            tile_layout.addWidget(value)
+            tile_layout.addWidget(self._label(tr(caption), size=9, color=colors.muted))
+            tiles.addWidget(tile, 1)
+            self.last_values[key] = value
+        layout.addLayout(tiles)
+
+        layout.addSpacing(14)
+        divider = QFrame()
+        divider.setFixedHeight(1)
+        divider.setStyleSheet(f"background: {colors.structure};")
+        layout.addWidget(divider)
+        layout.addSpacing(4)
+        footer = QHBoxLayout()
+        footer.addWidget(self._heading(tr("TOTAL")))
+        footer.addStretch(1)
+        self.total_line = self._label("—", size=10, color=colors.muted)
+        footer.addWidget(self.total_line)
+        layout.addLayout(footer)
+        layout.addStretch(1)
         self.update_usage(None, None, None, None)
 
-    def _heading(self, layout: QVBoxLayout, text: str) -> None:
+    def _label(self, text: str, *, size: int, color: str, bold: bool = False) -> QLabel:
         label = QLabel(text)
-        label.setStyleSheet(
-            f"color: {CyberpunkGreenTheme.accent}; letter-spacing: 2px; font-size: 10px;"
-        )
-        layout.addWidget(label)
+        weight = "font-weight: bold;" if bold else ""
+        label.setStyleSheet(f"color: {color}; font-size: {size}px; {weight}")
+        return label
 
-    def _row(self, layout: QVBoxLayout, key: str, caption: str) -> None:
-        line = QHBoxLayout()
-        name = QLabel(caption)
-        name.setStyleSheet(f"color: {CyberpunkGreenTheme.muted}; font-size: 11px;")
-        value = QLabel("—")
-        value.setStyleSheet(
-            f"color: {CyberpunkGreenTheme.text}; font-family: Consolas, monospace; font-size: 12px;"
-        )
-        value.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        line.addWidget(name)
-        line.addStretch(1)
-        line.addWidget(value)
-        layout.addLayout(line)
-        self._rows[key] = value
+    def _heading(self, text: str) -> QLabel:
+        label = QLabel(text)
+        label.setStyleSheet(f"color: {self._palette.accent}; font-size: 10px; letter-spacing: 2px;")
+        return label
 
     @staticmethod
     def _money(amount: float) -> str:
@@ -384,20 +692,22 @@ class StatsPanelWidget(QWidget):
 
     def update_usage(self, session, total, turn, elapsed_ms) -> None:
         if session is None:
-            for value in self._rows.values():
+            for label in (self.session_cost, self.session_tokens, self.split_in, self.split_out, self.total_line):
+                label.setText("—")
+            for value in self.last_values.values():
                 value.setText("—")
+            self.split_bar.set_split(0, 0)
             return
-        self._rows["session_tokens"].setText(self._count(session.total_tokens))
-        self._rows["session_split"].setText(
-            f"{self._count(session.prompt_tokens)} / {self._count(session.completion_tokens)}"
-        )
-        self._rows["session_cost"].setText(self._money(session.cost))
-        self._rows["total_tokens"].setText(self._count(total.total_tokens))
-        self._rows["total_cost"].setText(self._money(total.cost))
+        self.session_cost.setText(self._money(session.cost))
+        self.session_tokens.setText(f"{self._count(session.total_tokens)} {tr('tokens')}")
+        self.split_bar.set_split(session.prompt_tokens, session.completion_tokens)
+        self.split_in.setText(f"{tr('in')} {self._count(session.prompt_tokens)}")
+        self.split_out.setText(f"{tr('out')} {self._count(session.completion_tokens)}")
+        self.total_line.setText(f"{self._count(total.total_tokens)} {tr('tokens')}  ·  {self._money(total.cost)}")
         if turn is not None:
-            self._rows["last_turn"].setText(self._count(turn.total_tokens))
-            self._rows["last_cost"].setText(self._money(turn.cost))
-        self._rows["last_ms"].setText("—" if elapsed_ms is None else f"{elapsed_ms / 1000:.1f} s")
+            self.last_values["tokens"].setText(self._count(turn.total_tokens))
+            self.last_values["cost"].setText(self._money(turn.cost))
+        self.last_values["time"].setText("—" if elapsed_ms is None else f"{elapsed_ms / 1000:.1f} s")
 
 
 class ArqenWindow(QMainWindow):
@@ -426,17 +736,17 @@ class ArqenWindow(QMainWindow):
         self.navigation_buttons: dict[str, QPushButton] = {}
         navigation_layout.addWidget(QLabel("ARQEN", objectName="title"))
         navigation_layout.addWidget(QLabel("MISSION CONTROL"))
-        navigation_layout.addWidget(QLabel("OVERVIEW", objectName="navSection"))
+        navigation_layout.addWidget(QLabel(tr("OVERVIEW"), objectName="navSection"))
         for label, icon in (("Dashboard", "⌂"), ("Chat", "◌"), ("Mission Control", "◈")):
             self._add_navigation_button(navigation_layout, label, icon)
-        navigation_layout.addWidget(QLabel("SYSTEM", objectName="navSection"))
+        navigation_layout.addWidget(QLabel(tr("SYSTEM"), objectName="navSection"))
         for label, icon in (("Agents", "♙"), ("Activity", "≋"), ("Memory", "▤"), ("Tools", "⚿")):
             self._add_navigation_button(navigation_layout, label, icon)
-        navigation_layout.addWidget(QLabel("OPERATIONS", objectName="navSection"))
+        navigation_layout.addWidget(QLabel(tr("OPERATIONS"), objectName="navSection"))
         for label, icon in (("Tasks", "✓"), ("Workflows", "⌘"), ("Schedules", "◷"), ("Content", "◇")):
             self._add_navigation_button(navigation_layout, label, icon)
         navigation_layout.addStretch(1)
-        settings_nav = QPushButton("⚙  Settings")
+        settings_nav = QPushButton(f"⚙  {tr('Settings')}")
         settings_nav.setObjectName("navButton")
         settings_nav.setCursor(Qt.CursorShape.PointingHandCursor)
         settings_nav.clicked.connect(lambda: (self._select_navigation("Settings"), self.open_settings()))
@@ -446,31 +756,23 @@ class ArqenWindow(QMainWindow):
         sidebar = QFrame(objectName="panel")
         sidebar.setFixedWidth(320)
         sidebar_layout = QVBoxLayout(sidebar)
-        sidebar_layout.addWidget(QLabel("CHATS", objectName="title"))
-        new_chat = QPushButton("NEW CHAT")
+        sidebar_layout.addWidget(QLabel(tr("CHATS"), objectName="title"))
+        new_chat = QPushButton(tr("NEW CHAT"))
         new_chat.clicked.connect(self.create_new_session)
         sidebar_layout.addWidget(new_chat)
-        self.session_list = QListWidget()
-        self.session_list.setWordWrap(True)
-        self.session_list.setUniformItemSizes(False)
-        self.session_list.itemClicked.connect(lambda _: self.load_selected_session())
-        self.session_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.session_list.customContextMenuRequested.connect(self.show_session_menu)
-        sidebar_layout.addWidget(self.session_list, 1)
+        sidebar_layout.addStretch(1)
         icon_row = QHBoxLayout()
         self.mic_button = QPushButton("🎙")
-        self.mic_button.setToolTip("Start/stop microphone recording")
-        self.mic_button.setAccessibleName("Start/stop microphone recording")
+        self.mic_button.setAccessibleName(tr("Start/stop microphone recording"))
         self.mic_button.clicked.connect(self.toggle_microphone)
         self.voice_button = QPushButton("🔇")
-        self.voice_button.setToolTip("Toggle voice mode")
-        self.voice_button.setAccessibleName("Toggle voice mode")
+        self.voice_button.setAccessibleName(tr("Toggle voice mode"))
         self.voice_button.clicked.connect(self.toggle_voice_mode)
         settings_button = QPushButton("⚙")
-        settings_button.setToolTip("Settings")
-        settings_button.setAccessibleName("Settings")
+        settings_button.setToolTip(tr("Settings"))
+        settings_button.setAccessibleName(tr("Settings"))
         settings_button.clicked.connect(self.open_settings)
-        for button in (self.mic_button, self.voice_button, settings_button):
+        for button in (settings_button,):
             button.setMinimumWidth(0)
             button.setStyleSheet(
                 "QPushButton { background: transparent; color: #b7ff18; border: none; "
@@ -483,12 +785,15 @@ class ArqenWindow(QMainWindow):
         content = QWidget()
         content_layout = QVBoxLayout(content)
         session_bar = QHBoxLayout()
-        session_bar.addWidget(QLabel("SESSION"))
+        session_bar.addWidget(QLabel(tr("SESSION")))
         self.chat_session_selector = QComboBox()
         self.chat_session_selector.setMinimumWidth(220)
         self.chat_session_selector.activated.connect(self._load_selected_chat_from_bar)
+        self.chat_session_selector.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.chat_session_selector.customContextMenuRequested.connect(self.show_session_menu)
+        self.chat_session_selector.setToolTip(tr("Right-click to rename or delete the selected chat"))
         session_bar.addWidget(self.chat_session_selector, 1)
-        new_chat_button = QPushButton("NEW CHAT")
+        new_chat_button = QPushButton(tr("NEW CHAT"))
         self._style_page_action(new_chat_button, primary=True)
         new_chat_button.clicked.connect(self.create_new_session)
         session_bar.addWidget(new_chat_button)
@@ -499,7 +804,7 @@ class ArqenWindow(QMainWindow):
         self.provider_label = provider_label
         self.profile_name = profile_name
         self.status = QLabel(
-            self.provider_status("READY"),
+            self.provider_status(tr("READY")),
             objectName="status",
         )
         header_layout.addWidget(self.status)
@@ -516,7 +821,7 @@ class ArqenWindow(QMainWindow):
         chat_surface_layout = QGridLayout(chat_surface)
         chat_surface_layout.setContentsMargins(0, 0, 0, 0)
         chat_surface_layout.addWidget(self.output, 0, 0)
-        placeholder_label = QLabel("Conversation will appear here...", chat_surface)
+        placeholder_label = QLabel(tr("Conversation will appear here..."), chat_surface)
         placeholder_label.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
         placeholder_label.setStyleSheet("color: #f2f0eb; background: transparent; padding-top: 8px;")
         placeholder_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
@@ -524,8 +829,9 @@ class ArqenWindow(QMainWindow):
         self.output.textChanged.connect(lambda: placeholder_label.setVisible(not bool(self.output.toPlainText())))
         input_row = QHBoxLayout()
         self.input = QLineEdit()
-        self.input.setPlaceholderText("Type a message...")
-        self.microphone_status.connect(self.set_status)
+        self.input.setPlaceholderText(tr("Type a message..."))
+        self.microphone_status.connect(lambda text: self.set_status(tr_status(text)))
+        self.microphone_status.connect(self._on_microphone_status)
         self.microphone_result.connect(self._handle_microphone_result)
         self.microphone = MicrophoneRecorder(
             on_result=self.microphone_result.emit,
@@ -533,18 +839,18 @@ class ArqenWindow(QMainWindow):
         )
         self.input.returnPressed.connect(self.send_message)
         send = QPushButton("▶")
-        send.setToolTip("Send")
-        send.setAccessibleName("Send")
+        send.setToolTip(tr("Send"))
+        send.setAccessibleName(tr("Send"))
         send.setStyleSheet("QPushButton { background: transparent; color: #b7ff18; border: none; font-size: 32px; font-weight: 700; padding: 5px 8px 0 8px; } QPushButton:hover { color: #e1ff8a; }")
         send.clicked.connect(self.send_message)
         self.stop_button = QPushButton("■")
-        self.stop_button.setToolTip("Stop")
-        self.stop_button.setAccessibleName("Stop")
+        self.stop_button.setToolTip(tr("Stop"))
+        self.stop_button.setAccessibleName(tr("Stop"))
         self.stop_button.setStyleSheet("QPushButton { background: transparent; color: #b7ff18; border: none; font-size: 28px; font-weight: 700; padding: 0 8px; } QPushButton:hover { color: #e1ff8a; }")
         self.stop_button.clicked.connect(self.stop_response)
         self.stop_button.setEnabled(False)
-        self.confirm_button = QPushButton("CONFIRM")
-        self.cancel_button = QPushButton("CANCEL")
+        self.confirm_button = QPushButton(tr("CONFIRM"))
+        self.cancel_button = QPushButton(tr("CANCEL"))
         self.confirm_button.clicked.connect(lambda: self.resolve_confirmation(True))
         self.cancel_button.clicked.connect(lambda: self.resolve_confirmation(False))
         self.confirm_button.setVisible(False)
@@ -564,8 +870,8 @@ class ArqenWindow(QMainWindow):
         dashboard_layout = QVBoxLayout(dashboard)
         dashboard_layout.setContentsMargins(18, 18, 18, 18)
         dashboard_layout.setSpacing(12)
-        dashboard_layout.addWidget(QLabel("DASHBOARD", objectName="title"))
-        dashboard_layout.addWidget(QLabel("Mission Control // system overview", objectName="status"))
+        dashboard_layout.addWidget(QLabel(tr("DASHBOARD"), objectName="title"))
+        dashboard_layout.addWidget(QLabel(tr("Mission Control // system overview"), objectName="status"))
         cards = QGridLayout()
         cards.setSpacing(10)
         self.dashboard_cards: dict[str, QLabel] = {}
@@ -577,14 +883,14 @@ class ArqenWindow(QMainWindow):
             )
             card_layout = QVBoxLayout(card)
             card_layout.setContentsMargins(14, 12, 14, 12)
-            card_layout.addWidget(QLabel(label))
+            card_layout.addWidget(QLabel(tr(label)))
             value = QLabel("0", objectName="title")
             value.setStyleSheet("color: #c7ff2f; font-size: 26px; font-weight: 700;")
             card_layout.addWidget(value)
             self.dashboard_cards[key] = value
             cards.addWidget(card, index // 2, index % 2)
         dashboard_layout.addLayout(cards)
-        dashboard_layout.addWidget(QLabel("LATEST ACTIVITY", objectName="sectionLabel"))
+        dashboard_layout.addWidget(QLabel(tr("LATEST ACTIVITY"), objectName="sectionLabel"))
         self.dashboard_activity = QListWidget()
         self.dashboard_activity.setSpacing(4)
         self.dashboard_activity.setStyleSheet(
@@ -593,7 +899,7 @@ class ArqenWindow(QMainWindow):
             "QListWidget::item:last { border-bottom: none; }"
         )
         dashboard_layout.addWidget(self.dashboard_activity, 1)
-        open_chat = QPushButton("OPEN ARQEN CHAT")
+        open_chat = QPushButton(tr("OPEN ARQEN CHAT"))
         self._style_page_action(open_chat, primary=True)
         open_chat.clicked.connect(lambda: self._select_navigation("Chat"))
         dashboard_layout.addWidget(open_chat)
@@ -626,8 +932,8 @@ class ArqenWindow(QMainWindow):
                 continue
             page = QWidget()
             page_layout = QVBoxLayout(page)
-            page_layout.addWidget(QLabel(label.upper(), objectName="title"))
-            page_layout.addWidget(QLabel("This view will be expanded in the next UI step."))
+            page_layout.addWidget(QLabel(tr(label).upper(), objectName="title"))
+            page_layout.addWidget(QLabel(tr("This view will be expanded in the next UI step.")))
             page_layout.addStretch(1)
             self.navigation_stack.addWidget(page)
         layout.addWidget(self.navigation_stack, 1)
@@ -653,12 +959,12 @@ class ArqenWindow(QMainWindow):
     def _add_tasks_view(self) -> None:
         page = QWidget()
         page_layout = QVBoxLayout(page)
-        page_layout.addWidget(QLabel("TASKS", objectName="title"))
-        page_layout.addWidget(QLabel("Monitor, run and retry agent work."))
+        page_layout.addWidget(QLabel(tr("TASKS"), objectName="title"))
+        page_layout.addWidget(QLabel(tr("Monitor, run and retry agent work.")))
         self.tasks_attention_only = False
         task_filters = QHBoxLayout()
-        all_tasks = QPushButton("ALL TASKS")
-        attention_tasks = QPushButton("NEEDS ATTENTION")
+        all_tasks = QPushButton(tr("ALL TASKS"))
+        attention_tasks = QPushButton(tr("NEEDS ATTENTION"))
         for button in (all_tasks, attention_tasks):
             self._style_page_action(button)
             task_filters.addWidget(button)
@@ -679,25 +985,25 @@ class ArqenWindow(QMainWindow):
         self.mission_tasks.itemClicked.connect(self._show_mission_task)
         page_layout.addWidget(self.mission_tasks, 1)
         self.mission_details = QTextEdit(readOnly=True)
-        self.mission_details.setPlaceholderText("Select a task to view its summary and event history.")
+        self.mission_details.setPlaceholderText(tr("Select a task to view its summary and event history."))
         self.mission_details.setMinimumHeight(170)
         self.mission_details.setStyleSheet(
             "QTextEdit { background: #111516; border: 1px solid #30383a; border-radius: 8px; "
             "padding: 12px; color: #c4cec9; selection-background-color: #33452a; }"
         )
         page_layout.addWidget(self.mission_details)
-        self.mission_result_button = QPushButton("OPEN FULL RESULT")
+        self.mission_result_button = QPushButton(tr("OPEN FULL RESULT"))
         self._style_page_action(self.mission_result_button)
         self.mission_result_button.setEnabled(False)
         self.mission_result_button.clicked.connect(self._open_selected_task_result)
         page_layout.addWidget(self.mission_result_button, alignment=Qt.AlignmentFlag.AlignLeft)
-        page_layout.addWidget(QLabel("PENDING APPROVALS", objectName="sectionLabel"))
+        page_layout.addWidget(QLabel(tr("PENDING APPROVALS"), objectName="sectionLabel"))
         self.mission_approvals = QListWidget()
         self.mission_approvals.itemClicked.connect(self._show_selected_approval)
         page_layout.addWidget(self.mission_approvals)
         row = QHBoxLayout()
         for index, (label, handler) in enumerate((("NEW TASK", self._create_mission_task), ("RUN SELECTED TASK", self._run_mission_task), ("RETRY", self._retry_mission_task), ("DELETE TASK", self._delete_queued_task))):
-            button = QPushButton(label)
+            button = QPushButton(tr(label))
             self._style_page_action(button, primary=index == 0)
             button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
             button.clicked.connect(handler)
@@ -706,7 +1012,7 @@ class ArqenWindow(QMainWindow):
         page_layout.addLayout(row)
         approval_row = QHBoxLayout()
         for index, (label, status) in enumerate((("APPROVE", "approved"), ("REJECT", "rejected"))):
-            button = QPushButton(label)
+            button = QPushButton(tr(label))
             self._style_page_action(button, primary=index == 0)
             button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
             button.clicked.connect(lambda _, value=status: self._decide_mission_approval(value))
@@ -721,9 +1027,9 @@ class ArqenWindow(QMainWindow):
         page_layout.setContentsMargins(18, 18, 18, 18)
         page_layout.setSpacing(4)
         page_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
-        page_layout.addWidget(QLabel("WORKFLOWS", objectName="title"))
-        page_layout.addWidget(QLabel("Build and run multi-agent pipelines.", objectName="status"))
-        page_layout.addWidget(QLabel("AVAILABLE WORKFLOWS", objectName="sectionLabel"))
+        page_layout.addWidget(QLabel(tr("WORKFLOWS"), objectName="title"))
+        page_layout.addWidget(QLabel(tr("Build and run multi-agent pipelines."), objectName="status"))
+        page_layout.addWidget(QLabel(tr("AVAILABLE WORKFLOWS"), objectName="sectionLabel"))
         self.mission_workflows = QListWidget()
         self.mission_workflows.setSpacing(8)
         self.mission_workflows.setStyleSheet(
@@ -734,7 +1040,7 @@ class ArqenWindow(QMainWindow):
             "QListWidget::item:selected { background: #202a20; border: 1px solid #b7ff18; }"
         )
         page_layout.addWidget(self.mission_workflows)
-        page_layout.addWidget(QLabel("RECENT RUNS", objectName="sectionLabel"))
+        page_layout.addWidget(QLabel(tr("RECENT RUNS"), objectName="sectionLabel"))
         self.mission_workflow_runs = QListWidget()
         self.mission_workflow_runs.setSpacing(6)
         self.mission_workflow_runs.setStyleSheet(
@@ -745,11 +1051,11 @@ class ArqenWindow(QMainWindow):
         self.mission_workflow_runs.itemClicked.connect(self._show_workflow_run)
         page_layout.addWidget(self.mission_workflow_runs)
         self.mission_workflow_details = QTextEdit(readOnly=True)
-        self.mission_workflow_details.setPlaceholderText("Select a workflow run to view its results.")
+        self.mission_workflow_details.setPlaceholderText(tr("Select a workflow run to view its results."))
         page_layout.addWidget(self.mission_workflow_details)
         row = QHBoxLayout()
         for index, (label, handler) in enumerate((("NEW WORKFLOW", self._create_mission_workflow), ("RUN WORKFLOW", self._run_mission_workflow), ("RESUME RUN", self._resume_mission_workflow))):
-            button = QPushButton(label)
+            button = QPushButton(tr(label))
             button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
             self._style_page_action(button, primary=index == 0)
             button.clicked.connect(handler)
@@ -763,11 +1069,11 @@ class ArqenWindow(QMainWindow):
         if run is None:
             return
         if not run.results:
-            self.mission_workflow_details.setPlainText(f"Status: {run.status}\nNo results yet.")
+            self.mission_workflow_details.setPlainText(tr("Status: {status}\nNo results yet.", status=status_label(run.status)))
             return
-        lines = [f"Status: {run.status}", f"Completed steps: {run.current_step}", ""]
+        lines = [f"Status: {status_label(run.status)}", tr("Completed steps: {count}", count=run.current_step), ""]
         for index, result in enumerate(run.results, 1):
-            lines.extend((f"STEP {index}", result, ""))
+            lines.extend((tr("STEP {index}", index=index), result, ""))
         self.mission_workflow_details.setPlainText("\n".join(lines).rstrip())
 
     def _add_schedules_view(self) -> None:
@@ -775,8 +1081,8 @@ class ArqenWindow(QMainWindow):
         page_layout = QVBoxLayout(page)
         page_layout.setContentsMargins(18, 18, 18, 18)
         page_layout.setSpacing(10)
-        page_layout.addWidget(QLabel("SCHEDULES", objectName="title"))
-        page_layout.addWidget(QLabel("Automate recurring tasks and workflows.", objectName="status"))
+        page_layout.addWidget(QLabel(tr("SCHEDULES"), objectName="title"))
+        page_layout.addWidget(QLabel(tr("Automate recurring tasks and workflows."), objectName="status"))
         self.mission_schedules = QListWidget()
         self.mission_schedules.setSpacing(8)
         self.mission_schedules.setWordWrap(True)
@@ -790,7 +1096,7 @@ class ArqenWindow(QMainWindow):
         page_layout.addWidget(self.mission_schedules, 1)
         row = QHBoxLayout()
         for index, (label, handler) in enumerate((("NEW SCHEDULE", self._create_mission_schedule), ("ENABLE/DISABLE", self._toggle_mission_schedule), ("DELETE SCHEDULE", self._delete_mission_schedule))):
-            button = QPushButton(label)
+            button = QPushButton(tr(label))
             button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
             self._style_page_action(button, primary=index == 0)
             button.clicked.connect(handler)
@@ -805,9 +1111,9 @@ class ArqenWindow(QMainWindow):
         page_layout.setContentsMargins(18, 18, 18, 18)
         page_layout.setSpacing(4)
         page_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
-        title = QLabel("AGENTS", objectName="title")
+        title = QLabel(tr("AGENTS"), objectName="title")
         title.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
-        status = QLabel("Manage runtimes, tools and approval policies.", objectName="status")
+        status = QLabel(tr("Manage runtimes, tools and approval policies."), objectName="status")
         status.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         page_layout.addWidget(title)
         page_layout.addWidget(status)
@@ -825,7 +1131,7 @@ class ArqenWindow(QMainWindow):
         page_layout.addWidget(self.nexus_card_host, alignment=Qt.AlignmentFlag.AlignTop)
         self.agent_group_lists: dict[str, QListWidget] = {}
         for group in ("RESEARCH", "PRODUCTION", "DISTRIBUTION & REVIEW"):
-            page_layout.addWidget(QLabel(group, objectName="sectionLabel"))
+            page_layout.addWidget(QLabel(tr(group), objectName="sectionLabel"))
             group_list = QListWidget()
             group_list.setViewMode(QListWidget.ViewMode.IconMode)
             group_list.setResizeMode(QListWidget.ResizeMode.Adjust)
@@ -845,7 +1151,7 @@ class ArqenWindow(QMainWindow):
         self.mission_agents = self.agent_group_lists["RESEARCH"]
         row = QHBoxLayout()
         for index, (label, handler) in enumerate((("NEW AGENT", self._create_mission_agent), ("EDIT", self._edit_mission_agent), ("ENABLE/DISABLE", self._toggle_mission_agent))):
-            button = QPushButton(label)
+            button = QPushButton(tr(label))
             button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
             self._style_page_action(button, primary=index == 0)
             button.clicked.connect(handler)
@@ -876,8 +1182,8 @@ class ArqenWindow(QMainWindow):
         page_layout = QVBoxLayout(page)
         page_layout.setContentsMargins(18, 18, 18, 18)
         page_layout.setSpacing(10)
-        page_layout.addWidget(QLabel("ACTIVITY", objectName="title"))
-        page_layout.addWidget(QLabel("Live system events and agent activity.", objectName="status"))
+        page_layout.addWidget(QLabel(tr("ACTIVITY"), objectName="title"))
+        page_layout.addWidget(QLabel(tr("Live system events and agent activity."), objectName="status"))
         self.activity_view_list = QListWidget()
         self.activity_view_list.setSpacing(3)
         self.activity_view_list.setStyleSheet(
@@ -902,15 +1208,15 @@ class ArqenWindow(QMainWindow):
     def _add_memory_view(self) -> None:
         page = QWidget()
         page_layout = QVBoxLayout(page)
-        page_layout.addWidget(QLabel("MEMORY", objectName="title"))
-        page_layout.addWidget(QLabel("User-approved long-term context."))
+        page_layout.addWidget(QLabel(tr("MEMORY"), objectName="title"))
+        page_layout.addWidget(QLabel(tr("User-approved long-term context.")))
         self.memory_view_list = QListWidget()
         self.memory_view_list.itemDoubleClicked.connect(self._edit_memory_item)
         page_layout.addWidget(self.memory_view_list, 1)
         actions = QHBoxLayout()
-        refresh = QPushButton("REFRESH MEMORY")
-        edit = QPushButton("EDIT")
-        delete = QPushButton("DELETE")
+        refresh = QPushButton(tr("REFRESH MEMORY"))
+        edit = QPushButton(tr("EDIT"))
+        delete = QPushButton(tr("DELETE"))
         for button in (refresh, edit, delete):
             button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
             self._style_page_action(button)
@@ -926,11 +1232,11 @@ class ArqenWindow(QMainWindow):
     def _add_tools_view(self) -> None:
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.addWidget(QLabel("TOOL GATEWAY", objectName="title"))
-        layout.addWidget(QLabel("Catalog, policies and recent audit activity."))
+        layout.addWidget(QLabel(tr("TOOL GATEWAY"), objectName="title"))
+        layout.addWidget(QLabel(tr("Catalog, policies and recent audit activity.")))
         self.tools_view_list = QListWidget()
         layout.addWidget(self.tools_view_list, 1)
-        refresh = QPushButton("REFRESH TOOL GATEWAY")
+        refresh = QPushButton(tr("REFRESH TOOL GATEWAY"))
         self._style_page_action(refresh)
         refresh.clicked.connect(self._refresh_tools_view)
         layout.addWidget(refresh)
@@ -944,9 +1250,9 @@ class ArqenWindow(QMainWindow):
         for item in self.engine.gateway.catalog():
             self.tools_view_list.addItem(f"[{item['risk']}] {item['name']} — {item['description']}")
         for policy in self.engine.gateway.policy_view():
-            self.tools_view_list.addItem(f"POLICY {policy['agent']}: {policy['allowed_tools'] or 'all'}")
+            self.tools_view_list.addItem(tr("POLICY {agent}: {tools}", agent=policy["agent"], tools=policy["allowed_tools"] or tr("all")))
         for entry in self.engine.gateway.audit_entries(10):
-            self.tools_view_list.addItem(f"AUDIT {entry['status']}: {entry['tool']} ({entry['time']})")
+            self.tools_view_list.addItem(tr("AUDIT {status}: {tool} ({time})", status=entry["status"], tool=entry["tool"], time=entry["time"]))
 
     def _refresh_memory_view(self) -> None:
         if not hasattr(self, "memory_view_list"):
@@ -967,7 +1273,7 @@ class ArqenWindow(QMainWindow):
         old_fact = item.data(Qt.ItemDataRole.UserRole) if item else self._selected_memory()
         if not old_fact:
             return
-        new_fact, accepted = QInputDialog.getMultiLineText(self, "Edit memory", "Memory:", old_fact)
+        new_fact, accepted = QInputDialog.getMultiLineText(self, tr("Edit memory"), tr("Memory:"), old_fact)
         if accepted and new_fact.strip():
             MemoryStore().update(old_fact, new_fact)
             self._refresh_memory_view()
@@ -976,7 +1282,7 @@ class ArqenWindow(QMainWindow):
         fact = self._selected_memory()
         if not fact:
             return
-        answer = QMessageBox.question(self, "Delete memory", "Delete this memory?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        answer = QMessageBox.question(self, tr("Delete memory"), tr("Delete this memory?"), QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         if answer == QMessageBox.StandardButton.Yes:
             MemoryStore().forget(fact)
             self._refresh_memory_view()
@@ -984,11 +1290,11 @@ class ArqenWindow(QMainWindow):
     def _add_content_view(self) -> None:
         page = QWidget()
         page_layout = QVBoxLayout(page)
-        page_layout.addWidget(QLabel("CONTENT", objectName="title"))
-        page_layout.addWidget(QLabel("Generated files and workflow artifacts."))
+        page_layout.addWidget(QLabel(tr("CONTENT"), objectName="title"))
+        page_layout.addWidget(QLabel(tr("Generated files and workflow artifacts.")))
         self.content_view_list = QListWidget()
         page_layout.addWidget(self.content_view_list, 1)
-        refresh = QPushButton("REFRESH CONTENT")
+        refresh = QPushButton(tr("REFRESH CONTENT"))
         self._style_page_action(refresh)
         refresh.clicked.connect(self._refresh_content_view)
         page_layout.addWidget(refresh)
@@ -1006,7 +1312,7 @@ class ArqenWindow(QMainWindow):
                     self.content_view_list.addItem(str(path.relative_to(root)))
 
     def _add_navigation_button(self, layout: QVBoxLayout, label: str, icon: str) -> None:
-        button = QPushButton(f"{icon}  {label}")
+        button = QPushButton(f"{icon}  {tr(label)}")
         button.setObjectName("navButton")
         button.setCursor(Qt.CursorShape.PointingHandCursor)
         button.clicked.connect(lambda _, name=label: self._select_navigation(name))
@@ -1014,7 +1320,7 @@ class ArqenWindow(QMainWindow):
         self.navigation_buttons[label] = button
 
     def _select_navigation(self, name: str) -> None:
-        self.status.setText(self.provider_status(f"{name.upper()}"))
+        self.status.setText(self.provider_status(tr(name).upper()))
         for label, button in getattr(self, "navigation_buttons", {}).items():
             button.setProperty("active", label == name)
             button.setStyleSheet(
@@ -1047,15 +1353,15 @@ class ArqenWindow(QMainWindow):
         dock.setObjectName("missionControlDock")
         panel = QWidget()
         panel_layout = QVBoxLayout(panel)
-        panel_layout.addWidget(QLabel("WORKFLOWS"))
+        panel_layout.addWidget(QLabel(tr("WORKFLOWS")))
         legacy_workflows = QListWidget()
         panel_layout.addWidget(legacy_workflows)
         legacy_workflow_runs = QListWidget()
         panel_layout.addWidget(legacy_workflow_runs)
         workflow_row = QHBoxLayout()
-        new_workflow = QPushButton("NEW WORKFLOW")
-        run_workflow = QPushButton("RUN WORKFLOW")
-        resume_workflow = QPushButton("RESUME RUN")
+        new_workflow = QPushButton(tr("NEW WORKFLOW"))
+        run_workflow = QPushButton(tr("RUN WORKFLOW"))
+        resume_workflow = QPushButton(tr("RESUME RUN"))
         new_workflow.clicked.connect(self._create_mission_workflow)
         run_workflow.clicked.connect(self._run_mission_workflow)
         resume_workflow.clicked.connect(self._resume_mission_workflow)
@@ -1065,7 +1371,7 @@ class ArqenWindow(QMainWindow):
             workflow_row.addWidget(button)
         workflow_row.addStretch(1)
         panel_layout.addLayout(workflow_row)
-        panel_layout.addWidget(QLabel("ACTIVITY"))
+        panel_layout.addWidget(QLabel(tr("ACTIVITY")))
         self.mission_activity = QListWidget()
         self.mission_activity.itemClicked.connect(self._open_activity_task)
         panel_layout.addWidget(self.mission_activity)
@@ -1076,12 +1382,12 @@ class ArqenWindow(QMainWindow):
         self.mission_activity_timer.timeout.connect(self.refresh_mission_tasks)
         self.mission_activity_timer.timeout.connect(self.refresh_mission_approvals)
         self.mission_activity_timer.start()
-        panel_layout.addWidget(QLabel("SCHEDULES"))
+        panel_layout.addWidget(QLabel(tr("SCHEDULES")))
         legacy_schedules = QListWidget()
         panel_layout.addWidget(legacy_schedules)
         schedule_row = QHBoxLayout()
-        new_schedule = QPushButton("NEW SCHEDULE")
-        toggle_schedule = QPushButton("ENABLE/DISABLE")
+        new_schedule = QPushButton(tr("NEW SCHEDULE"))
+        toggle_schedule = QPushButton(tr("ENABLE/DISABLE"))
         new_schedule.clicked.connect(self._create_mission_schedule)
         toggle_schedule.clicked.connect(self._toggle_mission_schedule)
         for button in (new_schedule, toggle_schedule):
@@ -1090,13 +1396,13 @@ class ArqenWindow(QMainWindow):
             schedule_row.addWidget(button)
         schedule_row.addStretch(1)
         panel_layout.addLayout(schedule_row)
-        panel_layout.addWidget(QLabel("AGENTS"))
+        panel_layout.addWidget(QLabel(tr("AGENTS")))
         legacy_agents = QListWidget()
         panel_layout.addWidget(legacy_agents)
         agent_row = QHBoxLayout()
-        new_agent = QPushButton("NEW AGENT")
-        edit_agent = QPushButton("EDIT")
-        toggle_agent = QPushButton("ENABLE/DISABLE")
+        new_agent = QPushButton(tr("NEW AGENT"))
+        edit_agent = QPushButton(tr("EDIT"))
+        toggle_agent = QPushButton(tr("ENABLE/DISABLE"))
         new_agent.clicked.connect(self._create_mission_agent)
         edit_agent.clicked.connect(self._edit_mission_agent)
         toggle_agent.clicked.connect(self._toggle_mission_agent)
@@ -1107,26 +1413,26 @@ class ArqenWindow(QMainWindow):
         legacy_tasks = QListWidget()
         legacy_tasks.itemClicked.connect(self._show_mission_task)
         panel_layout.addWidget(legacy_tasks, 1)
-        panel_layout.addWidget(QLabel("PENDING APPROVALS"))
+        panel_layout.addWidget(QLabel(tr("PENDING APPROVALS")))
         legacy_approvals = QListWidget()
         legacy_approvals.itemClicked.connect(self._show_selected_approval)
         panel_layout.addWidget(legacy_approvals)
         approval_row = QHBoxLayout()
-        approve = QPushButton("APPROVE")
-        reject = QPushButton("REJECT")
+        approve = QPushButton(tr("APPROVE"))
+        reject = QPushButton(tr("REJECT"))
         approve.clicked.connect(lambda: self._decide_mission_approval("approved"))
         reject.clicked.connect(lambda: self._decide_mission_approval("rejected"))
         approval_row.addWidget(approve)
         approval_row.addWidget(reject)
         panel_layout.addLayout(approval_row)
-        create = QPushButton("NEW TASK")
+        create = QPushButton(tr("NEW TASK"))
         create.clicked.connect(self._create_mission_task)
-        run = QPushButton("RUN SELECTED TASK")
+        run = QPushButton(tr("RUN SELECTED TASK"))
         run.clicked.connect(self._run_mission_task)
-        retry = QPushButton("RETRY")
+        retry = QPushButton(tr("RETRY"))
         retry.clicked.connect(self._retry_mission_task)
         legacy_details = QTextEdit(readOnly=True)
-        legacy_details.setPlaceholderText("Select a task to view status and events.")
+        legacy_details.setPlaceholderText(tr("Select a task to view status and events."))
         panel_layout.addWidget(legacy_details)
         panel_layout.addWidget(create)
         panel_layout.addWidget(run)
@@ -1140,8 +1446,8 @@ class ArqenWindow(QMainWindow):
         overview_layout = QVBoxLayout(overview)
         overview_layout.setContentsMargins(18, 18, 18, 18)
         overview_layout.setSpacing(12)
-        overview_layout.addWidget(QLabel("MISSION CONTROL", objectName="title"))
-        overview_layout.addWidget(QLabel("Operational queue // decide what should happen next.", objectName="status"))
+        overview_layout.addWidget(QLabel(tr("MISSION CONTROL"), objectName="title"))
+        overview_layout.addWidget(QLabel(tr("Operational queue // decide what should happen next."), objectName="status"))
         overview_cards = QGridLayout()
         overview_cards.setSpacing(10)
         self.mission_overview_cards: dict[str, QLabel] = {}
@@ -1165,14 +1471,14 @@ class ArqenWindow(QMainWindow):
             )
             card_layout = QVBoxLayout(card)
             card_layout.setContentsMargins(14, 12, 14, 12)
-            card_layout.addWidget(QLabel(label))
+            card_layout.addWidget(QLabel(tr(label)))
             value = QLabel("0", objectName="title")
             value.setStyleSheet("color: #d8ff75; font-size: 26px; font-weight: 700;")
             card_layout.addWidget(value)
             self.mission_overview_cards[key] = value
             overview_cards.addWidget(card, index // 2, index % 2)
         overview_layout.addLayout(overview_cards)
-        overview_layout.addWidget(QLabel("LATEST ACTIVITY", objectName="sectionLabel"))
+        overview_layout.addWidget(QLabel(tr("LATEST ACTIVITY"), objectName="sectionLabel"))
         self.mission_overview_activity = QListWidget()
         self.mission_overview_activity.setSpacing(4)
         self.mission_overview_activity.setStyleSheet(
@@ -1183,7 +1489,7 @@ class ArqenWindow(QMainWindow):
         overview_layout.addWidget(self.mission_overview_activity)
         overview_actions = QHBoxLayout()
         for label, target in (("OPEN TASKS", "Tasks"), ("OPEN WORKFLOWS", "Workflows"), ("OPEN ACTIVITY", "Activity")):
-            button = QPushButton(label)
+            button = QPushButton(tr(label))
             button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
             self._style_page_action(button, primary=target == "Tasks")
             button.clicked.connect(lambda _, name=target: self._select_navigation(name))
@@ -1222,12 +1528,12 @@ class ArqenWindow(QMainWindow):
         if hasattr(self, "mission_overview_activity"):
             self.mission_overview_activity.clear()
         for event in self.mission_store.list_all_events(8):
-            text = f"[{event.kind}] {event.message}"
+            text = f"[{status_label(event.kind)}] {tr(event.message)}"
             self.dashboard_activity.addItem(text)
             if hasattr(self, "mission_overview_activity"):
                 self.mission_overview_activity.addItem(text)
         if hasattr(self, "mission_overview_activity") and not self.mission_overview_activity.count():
-            self.mission_overview_activity.addItem("No recent activity")
+            self.mission_overview_activity.addItem(tr("No recent activity"))
 
     def refresh_mission_activity(self) -> None:
         target = getattr(self, "activity_view_list", self.mission_activity)
@@ -1239,10 +1545,10 @@ class ArqenWindow(QMainWindow):
             # the complete history.
             latest_by_task.setdefault(event.task_id, event)
         for event in latest_by_task.values():
-            kind = event.kind.upper().replace("_", " ")
+            kind = status_label(event.kind)
             task = self.mission_store.get_task(event.task_id)
-            task_label = task.title if task is not None else f"task {event.task_id[:8]}"
-            item = QListWidgetItem(f"{kind}  ·  {task_label}\n{event.message}  ·  {event.created_at}")
+            task_label = task.title if task is not None else tr("task {id}", id=event.task_id[:8])
+            item = QListWidgetItem(f"{kind}  ·  {task_label}\n{tr(event.message)}  ·  {event.created_at}")
             item.setData(Qt.ItemDataRole.UserRole, event.task_id)
             item.setSizeHint(QSize(0, 46))
             if event.kind in {"failed", "approval_rejected"}:
@@ -1269,15 +1575,18 @@ class ArqenWindow(QMainWindow):
     def _show_selected_approval(self, item: QListWidgetItem) -> None:
         approval = self.mission_store.get_approval(item.data(Qt.ItemDataRole.UserRole))
         if approval:
+            summary = tr(
+                "Approval\nAction: {action}\nTask: {task}\nStatus: {status}",
+                action=approval.action, task=approval.task_id, status=status_label(approval.status),
+            )
             self.mission_details.setPlainText(
-                f"Approval\nAction: {approval.action}\nTask: {approval.task_id}\nStatus: {approval.status}\n\n"
-                f"{json.dumps(approval.payload, ensure_ascii=False, indent=2)}"
+                f"{summary}\n\n{json.dumps(approval.payload, ensure_ascii=False, indent=2)}"
             )
 
     def refresh_mission_workflows(self) -> None:
         self.mission_workflows.clear()
         for workflow in self.mission_store.list_workflows():
-            item = QListWidgetItem(f"{workflow.name}\n{len(workflow.steps)} steps  ·  multi-agent pipeline")
+            item = QListWidgetItem(f"{workflow.name}\n" + tr("{count} steps  ·  multi-agent pipeline", count=len(workflow.steps)))
             item.setData(Qt.ItemDataRole.UserRole, workflow.id)
             item.setSizeHint(QSize(0, 58))
             item.setToolTip("\n".join(f"{step.name} → {step.agent_id or 'Arqen'}" for step in workflow.steps))
@@ -1289,11 +1598,11 @@ class ArqenWindow(QMainWindow):
             selected_id = self.mission_workflow_runs.currentItem().data(Qt.ItemDataRole.UserRole)
         self.mission_workflow_runs.clear()
         for run in self.mission_store.list_workflow_runs():
-            status = run.status.upper().replace("_", " ")
-            item = QListWidgetItem(f"{status}  ·  step {run.current_step}\n{run.workflow_id}  ·  {run.id[:8]}")
+            heading = tr("{status}  ·  step {step}", status=status_label(run.status), step=run.current_step)
+            item = QListWidgetItem(f"{heading}\n{run.workflow_id}  ·  {run.id[:8]}")
             item.setData(Qt.ItemDataRole.UserRole, run.id)
             item.setSizeHint(QSize(0, 52))
-            item.setToolTip("\n".join(run.results) or "No results yet")
+            item.setToolTip("\n".join(run.results) or tr("No results yet"))
             self.mission_workflow_runs.addItem(item)
             if run.id == selected_id:
                 self.mission_workflow_runs.setCurrentItem(item)
@@ -1301,10 +1610,10 @@ class ArqenWindow(QMainWindow):
             self._show_workflow_run(self.mission_workflow_runs.currentItem())
 
     def _create_mission_workflow(self) -> None:
-        name, accepted = QInputDialog.getText(self, "New workflow", "Name:")
+        name, accepted = QInputDialog.getText(self, tr("New workflow"), tr("Name:"))
         if not accepted or not name.strip():
             return
-        raw, accepted = QInputDialog.getMultiLineText(self, "New workflow", "One step per line: name | prompt | agent-id (optional)")
+        raw, accepted = QInputDialog.getMultiLineText(self, tr("New workflow"), tr("One step per line: name | prompt | agent-id (optional)"))
         if not accepted:
             return
         steps = []
@@ -1313,7 +1622,7 @@ class ArqenWindow(QMainWindow):
             if len(parts) >= 2 and parts[0] and parts[1]:
                 steps.append(WorkflowStep(parts[0], parts[1], parts[2] if len(parts) == 3 and parts[2] else None))
         if not steps:
-            QMessageBox.warning(self, "Mission Control", "At least one valid step is required.")
+            QMessageBox.warning(self, "Mission Control", tr("At least one valid step is required."))
             return
         self.mission_store.save_workflow(Workflow(uuid4().hex, name.strip(), tuple(steps)))
         self.refresh_mission_workflows()
@@ -1325,18 +1634,18 @@ class ArqenWindow(QMainWindow):
         workflow = next((entry for entry in self.mission_store.list_workflows() if entry.id == item.data(Qt.ItemDataRole.UserRole)), None)
         if workflow is None:
             return
-        topic, accepted = QInputDialog.getText(self, "Run workflow", "Topic:")
+        topic, accepted = QInputDialog.getText(self, tr("Run workflow"), tr("Topic:"))
         if not accepted or not topic.strip():
             return
-        audience, accepted = QInputDialog.getText(self, "Run workflow", "Target audience (optional):")
+        audience, accepted = QInputDialog.getText(self, tr("Run workflow"), tr("Target audience (optional):"))
         if not accepted:
             return
-        content_format, accepted = QInputDialog.getText(self, "Run workflow", "Content format (optional):", text="YouTube video")
+        content_format, accepted = QInputDialog.getText(self, tr("Run workflow"), tr("Content format (optional):"), text=tr("YouTube video"))
         if not accepted:
             return
-        input_text = f"Topic: {topic.strip()}"
+        input_text = f"Ämne: {topic.strip()}"
         if audience.strip():
-            input_text += f"\nTarget audience: {audience.strip()}"
+            input_text += f"\nMålgrupp: {audience.strip()}"
         if content_format.strip():
             input_text += f"\nFormat: {content_format.strip()}"
         try:
@@ -1367,74 +1676,77 @@ class ArqenWindow(QMainWindow):
         self.mission_schedules.clear()
         for schedule in self.mission_store.list_schedules():
             mode = self._schedule_display(schedule)
-            state = "ON" if schedule.enabled else "OFF"
+            state = tr("ON") if schedule.enabled else tr("OFF")
             agent = self.mission_store.get_agent(schedule.agent_id) if schedule.agent_id else None
             workflow = next((item for item in self.mission_store.list_workflows() if item.id == schedule.workflow_id), None) if schedule.workflow_id else None
             count = sum(1 for task in self.mission_store.list_tasks() if task.schedule_id == schedule.id)
             last = schedule.last_run_at or "aldrig"
-            target = f"workflow: {workflow.name}" if workflow else f"task: {agent.name if agent else 'Arqen'}"
-            item = QListWidgetItem(f"{schedule.name}\n{state}  ·  {mode}\n{target}  ·  {count} tasks  ·  last: {last}")
+            target = tr("workflow: {name}", name=workflow.name) if workflow else tr("task: {name}", name=agent.name if agent else "Arqen")
+            counts = tr("{count} tasks", count=count)
+            item = QListWidgetItem(f"{schedule.name}\n{state}  ·  {mode}\n{target}  ·  {counts}  ·  {tr('last: {last}', last=last)}")
             item.setData(Qt.ItemDataRole.UserRole, schedule.id)
             item.setSizeHint(QSize(0, 72))
-            item.setToolTip(f"Last run: {last}")
+            item.setToolTip(tr("Last run: {last}", last=last))
             item.setForeground(QColor("#b7ff18" if schedule.enabled else "#657078"))
             self.mission_schedules.addItem(item)
 
     @staticmethod
     def _schedule_display(schedule: Schedule) -> str:
         if not schedule.cron:
-            return f"One time: {schedule.run_at or 'not set'}"
+            return tr("One time: {when}", when=schedule.run_at or tr("not set"))
         parts = schedule.cron.split()
         if len(parts) != 5:
-            return f"Advanced: {schedule.cron}"
+            return tr("Advanced: {cron}", cron=schedule.cron)
         minute, hour, day, month, weekday = parts
         try:
             time_label = f"{int(hour):02d}:{int(minute):02d}"
         except ValueError:
-            return f"Advanced: {schedule.cron}"
+            return tr("Advanced: {cron}", cron=schedule.cron)
         if day == "*" and month == "*" and weekday == "*":
-            return f"Every day at {time_label}"
+            return tr("Every day at {time}", time=time_label)
         if day == "*" and month == "*" and weekday != "*":
             names = {"0": "Sunday", "1": "Monday", "2": "Tuesday", "3": "Wednesday", "4": "Thursday", "5": "Friday", "6": "Saturday", "7": "Sunday"}
-            return f"Every {names.get(weekday, weekday)} at {time_label}"
+            return tr("Every {day} at {time}", day=tr(names.get(weekday, weekday)), time=time_label)
         if day != "*" and month == "*" and weekday == "*":
-            return f"Monthly on day {day} at {time_label}"
-        return f"Advanced: {schedule.cron}"
+            return tr("Monthly on day {day} at {time}", day=day, time=time_label)
+        return tr("Advanced: {cron}", cron=schedule.cron)
 
     def _create_mission_schedule(self) -> None:
         dialog = QDialog(self)
-        dialog.setWindowTitle("New schedule")
+        dialog.setWindowTitle(tr("New schedule"))
         dialog_layout = QVBoxLayout(dialog)
         form = QFormLayout()
         name = QLineEdit()
-        name.setPlaceholderText("e.g. Morning research")
-        form.addRow("Name", name)
+        name.setPlaceholderText(tr("e.g. Morning research"))
+        form.addRow(tr("Name"), name)
         prompt = QTextEdit()
-        prompt.setPlaceholderText("Describe what should happen when this schedule runs.")
+        prompt.setPlaceholderText(tr("Describe what should happen when this schedule runs."))
         prompt.setMinimumHeight(90)
-        form.addRow("Instruction", prompt)
+        form.addRow(tr("Instruction"), prompt)
         run = QComboBox()
-        run.addItem("A regular task", None)
+        run.addItem(tr("A regular task"), None)
         workflows = self.mission_store.list_workflows()
         for workflow in workflows:
-            run.addItem(f"Workflow: {workflow.name}", workflow.id)
-        form.addRow("Run", run)
+            run.addItem(tr("Workflow: {name}", name=workflow.name), workflow.id)
+        form.addRow(tr("Run"), run)
         agents = [agent for agent in self.mission_store.list_agents() if agent.enabled]
         agent_box = QComboBox()
-        agent_box.addItem("Arqen default", None)
+        agent_box.addItem(tr("Arqen default"), None)
         for agent in agents:
             agent_box.addItem(f"{agent.name} — {agent.role}", agent.id)
-        form.addRow("Agent", agent_box)
+        form.addRow(tr("Agent"), agent_box)
         frequency = QComboBox()
-        frequency.addItems(["Every day", "Every week", "Every month", "One time", "Advanced (cron)"])
-        form.addRow("When", frequency)
+        # The visible text is translated; the English value drives the logic below.
+        for mode_name in ("Every day", "Every week", "Every month", "One time", "Advanced (cron)"):
+            frequency.addItem(tr(mode_name), mode_name)
+        form.addRow(tr("When"), frequency)
         weekday = QComboBox()
-        weekday.addItems(["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"])
-        form.addRow("Weekday", weekday)
+        weekday.addItems([tr(day).capitalize() for day in ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")])
+        form.addRow(tr("Weekday"), weekday)
         timing = QLineEdit("08:00")
         timing.setPlaceholderText("HH:MM")
-        form.addRow("Time", timing)
-        help_label = QLabel("Choose a simple schedule. Advanced cron is optional.")
+        form.addRow(tr("Time"), timing)
+        help_label = QLabel(tr("Choose a simple schedule. Advanced cron is optional."))
         help_label.setWordWrap(True)
         help_label.setStyleSheet("color: #8d969d; font-size: 11px;")
         dialog_layout.addLayout(form)
@@ -1443,19 +1755,20 @@ class ArqenWindow(QMainWindow):
         buttons.accepted.connect(dialog.accept)
         buttons.rejected.connect(dialog.reject)
         dialog_layout.addWidget(buttons)
-        def update_schedule_fields(value: str) -> None:
+        def update_schedule_fields() -> None:
+            value = frequency.currentData()
             timing.setPlaceholderText("ISO-8601 UTC" if value == "One time" else "HH:MM")
             weekday.setEnabled(value == "Every week")
-            weekday.setToolTip("Used only for weekly schedules.")
+            weekday.setToolTip(tr("Used only for weekly schedules."))
 
-        frequency.currentTextChanged.connect(update_schedule_fields)
-        update_schedule_fields(frequency.currentText())
+        frequency.currentIndexChanged.connect(lambda _: update_schedule_fields())
+        update_schedule_fields()
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         if not name.text().strip() or not prompt.toPlainText().strip():
-            QMessageBox.warning(self, "New schedule", "Fill in both a name and an instruction.")
+            QMessageBox.warning(self, tr("New schedule"), tr("Fill in both a name and an instruction."))
             return
-        mode = frequency.currentText()
+        mode = frequency.currentData()
         value = timing.text().strip()
         if mode == "One time":
             if re.fullmatch(r"\d{1,2}:\d{2}", value):
@@ -1467,14 +1780,14 @@ class ArqenWindow(QMainWindow):
                 try:
                     datetime.fromisoformat(value)
                 except ValueError:
-                    QMessageBox.warning(self, "New schedule", "Use HH:MM or an ISO-8601 date and time.")
+                    QMessageBox.warning(self, tr("New schedule"), tr("Use HH:MM or an ISO-8601 date and time."))
                     return
             schedule = Schedule(uuid4().hex, name.text().strip(), prompt.toPlainText().strip(), run_at=value)
         elif mode == "Advanced (cron)":
             schedule = Schedule(uuid4().hex, name.text().strip(), prompt.toPlainText().strip(), cron=value)
         else:
             if not re.fullmatch(r"\d{1,2}:\d{2}", value):
-                QMessageBox.warning(self, "New schedule", "Time must use HH:MM, for example 08:00.")
+                QMessageBox.warning(self, tr("New schedule"), tr("Time must use HH:MM, for example 08:00."))
                 return
             hour, minute = value.split(":")
             cron = f"{int(minute)} {int(hour)} * * *"
@@ -1507,8 +1820,8 @@ class ArqenWindow(QMainWindow):
             return
         answer = QMessageBox.question(
             self,
-            "Delete schedule",
-            f"Delete '{schedule.name}'? Existing tasks will be kept.",
+            tr("Delete schedule"),
+            tr("Delete '{name}'? Existing tasks will be kept.", name=schedule.name),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if answer != QMessageBox.StandardButton.Yes:
@@ -1527,8 +1840,8 @@ class ArqenWindow(QMainWindow):
         agents.sort(key=lambda agent: agent.name.lower())
         for agent in agents:
             status = self.mission_runner.runtime_status(agent.id)
-            tools = ", ".join(agent.allowed_tools) or "no tools"
-            approvals = ", ".join(agent.approval_tools) or "none"
+            tools = ", ".join(agent.allowed_tools) or tr("no tools")
+            approvals = ", ".join(agent.approval_tools) or tr("none")
             card = QFrame(objectName="panel")
             card.setFixedSize(270, 154)
             card.setStyleSheet(
@@ -1548,17 +1861,20 @@ class ArqenWindow(QMainWindow):
             role_label = QLabel(agent.role)
             role_label.setStyleSheet("color: #dbe2df; font-weight: 600;")
             card_layout.addWidget(role_label)
-            runtime_label = QLabel(f"{agent.runtime} runtime  ·  {len(agent.allowed_tools)} tools")
+            runtime_label = QLabel(tr("{runtime} runtime  ·  {count} tools", runtime=agent.runtime, count=len(agent.allowed_tools)))
             runtime_label.setStyleSheet("color: #8d969d; font-size: 11px;")
             card_layout.addWidget(runtime_label)
-            state_label = QLabel("ENABLED" if agent.enabled else "DISABLED")
+            state_label = QLabel(tr("ENABLED") if agent.enabled else tr("DISABLED"))
             state_label.setStyleSheet(f"color: {indicator_color}; font-size: 10px; letter-spacing: 1px;")
             card_layout.addWidget(state_label)
-            chat = QPushButton("CHAT")
+            chat = QPushButton(tr("CHAT"))
             self._style_page_action(chat)
             chat.clicked.connect(lambda _, name=agent.name: self._open_agent_chat(name))
             card_layout.addWidget(chat)
-            card.setToolTip(f"{status.get('detail', status.get('status', ''))}\nAllowed tools: {tools}\nRequires approval: {approvals}")
+            card.setToolTip(tr(
+                "{detail}\nAllowed tools: {tools}\nRequires approval: {approvals}",
+                detail=status.get("detail", status.get("status", "")), tools=tools, approvals=approvals,
+            ))
             if agent.id == "nexus":
                 self.nexus_card_layout.addWidget(card, alignment=Qt.AlignmentFlag.AlignHCenter)
             else:
@@ -1576,33 +1892,33 @@ class ArqenWindow(QMainWindow):
 
     def _open_agent_chat(self, agent_name: str) -> None:
         self._select_navigation("Chat")
-        self.set_status(self.provider_status(f"CHAT // {agent_name.upper()}"))
+        self.set_status(self.provider_status(tr("CHAT // {name}", name=agent_name.upper())))
 
     def _create_mission_agent(self) -> None:
-        agent_id, accepted = QInputDialog.getText(self, "New agent", "ID:")
+        agent_id, accepted = QInputDialog.getText(self, tr("New agent"), "ID:")
         if not accepted or not agent_id.strip():
             return
-        name, accepted = QInputDialog.getText(self, "New agent", "Name:")
+        name, accepted = QInputDialog.getText(self, tr("New agent"), tr("Name:"))
         if not accepted or not name.strip():
             return
-        role, accepted = QInputDialog.getText(self, "New agent", "Role:")
+        role, accepted = QInputDialog.getText(self, tr("New agent"), tr("Role:"))
         if not accepted or not role.strip():
             return
-        runtime, accepted = QInputDialog.getItem(self, "New agent", "Runtime:", ["arqen", "hermes"], 0, False)
+        runtime, accepted = QInputDialog.getItem(self, tr("New agent"), tr("Runtime:"), ["arqen", "hermes"], 0, False)
         if not accepted:
             return
         available = [item["name"] for item in self.engine.tools.describe()]
         tools_dialog = QDialog(self)
-        tools_dialog.setWindowTitle("New agent — Allowed tools")
+        tools_dialog.setWindowTitle(tr("New agent — Allowed tools"))
         tools_layout = QVBoxLayout(tools_dialog)
-        tools_layout.addWidget(QLabel("Select tools by entering their names, separated by commas."))
+        tools_layout.addWidget(QLabel(tr("Select tools by entering their names, separated by commas.")))
         available_view = QTextEdit(readOnly=True)
         available_view.setPlainText("\n".join(available))
         available_view.setMaximumHeight(150)
         tools_layout.addWidget(available_view)
-        tools_layout.addWidget(QLabel("Allowed tools"))
+        tools_layout.addWidget(QLabel(tr("Allowed tools")))
         tools_input = QLineEdit()
-        tools_input.setPlaceholderText("e.g. system_status,current_time")
+        tools_input.setPlaceholderText(tr("e.g. system_status,current_time"))
         tools_layout.addWidget(tools_input)
         tool_buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         tool_buttons.accepted.connect(tools_dialog.accept)
@@ -1614,15 +1930,15 @@ class ArqenWindow(QMainWindow):
         allowed_tools = tuple(item.strip() for item in tools_text.split(",") if item.strip())
         unknown = sorted(set(allowed_tools) - set(available))
         if unknown:
-            QMessageBox.warning(self, "Mission Control", f"Unknown tools: {', '.join(unknown)}")
+            QMessageBox.warning(self, "Mission Control", tr("Unknown tools: {tools}", tools=", ".join(unknown)))
             return
-        approvals_text, accepted = QInputDialog.getText(self, "New agent", "Tools requiring approval (comma-separated):")
+        approvals_text, accepted = QInputDialog.getText(self, tr("New agent"), tr("Tools requiring approval (comma-separated):"))
         if not accepted:
             return
         approval_tools = tuple(value.strip() for value in approvals_text.split(",") if value.strip())
         invalid_approvals = sorted(set(approval_tools) - set(allowed_tools))
         if invalid_approvals:
-            QMessageBox.warning(self, "Mission Control", "Approval tools must be included in the allowlist.")
+            QMessageBox.warning(self, "Mission Control", tr("Approval tools must be included in the allowlist."))
             return
         self.mission_store.save_agent(Agent(agent_id.strip(), name.strip(), role.strip(), runtime, True, allowed_tools, approval_tools))
         self.refresh_mission_agents()
@@ -1645,31 +1961,31 @@ class ArqenWindow(QMainWindow):
         agent = self.mission_store.get_agent(item.data(Qt.ItemDataRole.UserRole))
         if agent is None:
             return
-        name, accepted = QInputDialog.getText(self, "Edit agent", "Name:", text=agent.name)
+        name, accepted = QInputDialog.getText(self, tr("Edit agent"), tr("Name:"), text=agent.name)
         if not accepted or not name.strip():
             return
-        role, accepted = QInputDialog.getText(self, "Edit agent", "Role:", text=agent.role)
+        role, accepted = QInputDialog.getText(self, tr("Edit agent"), tr("Role:"), text=agent.role)
         if not accepted or not role.strip():
             return
-        runtime, accepted = QInputDialog.getItem(self, "Edit agent", "Runtime:", ["arqen", "hermes"], max(0, ["arqen", "hermes"].index(agent.runtime)), False)
+        runtime, accepted = QInputDialog.getItem(self, tr("Edit agent"), tr("Runtime:"), ["arqen", "hermes"], max(0, ["arqen", "hermes"].index(agent.runtime)), False)
         if not accepted:
             return
         current_tools = ", ".join(agent.allowed_tools)
-        tools_text, accepted = QInputDialog.getText(self, "Edit agent", "Allowed tools:", text=current_tools)
+        tools_text, accepted = QInputDialog.getText(self, tr("Edit agent"), tr("Allowed tools:"), text=current_tools)
         if not accepted:
             return
         available = {entry["name"] for entry in self.engine.tools.describe()}
         allowed_tools = tuple(value.strip() for value in tools_text.split(",") if value.strip())
         unknown = sorted(set(allowed_tools) - available)
         if unknown:
-            QMessageBox.warning(self, "Mission Control", f"Unknown tools: {', '.join(unknown)}")
+            QMessageBox.warning(self, "Mission Control", tr("Unknown tools: {tools}", tools=", ".join(unknown)))
             return
-        approvals_text, accepted = QInputDialog.getText(self, "Edit agent", "Tools requiring approval:", text=", ".join(agent.approval_tools))
+        approvals_text, accepted = QInputDialog.getText(self, tr("Edit agent"), tr("Tools requiring approval:"), text=", ".join(agent.approval_tools))
         if not accepted:
             return
         approval_tools = tuple(value.strip() for value in approvals_text.split(",") if value.strip())
         if set(approval_tools) - set(allowed_tools):
-            QMessageBox.warning(self, "Mission Control", "Approval tools must be included in the allowlist.")
+            QMessageBox.warning(self, "Mission Control", tr("Approval tools must be included in the allowlist."))
             return
         self.mission_store.save_agent(Agent(agent.id, name.strip(), role.strip(), runtime, agent.enabled, allowed_tools, approval_tools))
         self.refresh_mission_agents()
@@ -1686,8 +2002,8 @@ class ArqenWindow(QMainWindow):
             tasks = [task for task in tasks if task.status in {"failed", "cancelled"}]
         for task in tasks:
             agent = self.mission_store.get_agent(task.agent_id) if task.agent_id else None
-            agent_label = agent.name if agent else "Arqen default"
-            status = task.status.upper().replace("_", " ")
+            agent_label = agent.name if agent else tr("Arqen default")
+            status = status_label(task.status)
             item = QListWidgetItem(f"{task.title}\n{status}  ·  {agent_label}")
             item.setData(Qt.ItemDataRole.UserRole, task.id)
             item.setSizeHint(QSize(0, 64))
@@ -1756,27 +2072,30 @@ class ArqenWindow(QMainWindow):
         self.mission_result_button.setEnabled(bool(task.result))
         events = self.mission_store.list_events(task.id)
         agent = self.mission_store.get_agent(task.agent_id) if task.agent_id else None
-        agent_label = agent.name if agent else "Arqen default"
-        source = task.schedule_id or "manuell"
-        status = task.status.upper().replace("_", " ")
+        agent_label = agent.name if agent else tr("Arqen default")
+        source = task.schedule_id or tr("manual")
+        if task.result:
+            result = clean_result_markup(task.result)
+        else:
+            result = tr("No result stored.") if task.status == "completed" else tr("Not available yet.")
         lines = [
             task.title,
             "",
-            f"STATUS     {status}",
-            f"AGENT      {agent_label}",
-            f"SOURCE     {source}",
-            f"ATTEMPTS   {task.attempts}/{task.max_attempts}",
-            f"ERROR      {task.error or 'none'}",
+            f"{tr('STATUS'):<11}{status_label(task.status)}",
+            f"{tr('AGENT'):<11}{agent_label}",
+            f"{tr('SOURCE'):<11}{source}",
+            f"{tr('ATTEMPTS'):<11}{task.attempts}/{task.max_attempts}",
+            f"{tr('ERROR'):<11}{tr(task.error) if task.error else tr('none')}",
             "",
-            "INSTRUCTION",
+            tr("INSTRUCTION"),
             task.prompt,
             "",
-            "RESULT",
-            clean_result_markup(task.result) if task.result else ("No result stored." if task.status == "completed" else "Not available yet."),
+            tr("RESULT"),
+            result,
             "",
-            "EVENT HISTORY",
+            tr("EVENT HISTORY"),
         ]
-        lines.extend(f"{event.created_at}  {event.kind}: {event.message}" for event in events)
+        lines.extend(f"{event.created_at}  {status_label(event.kind)}: {tr(event.message)}" for event in events)
         self.mission_details.setPlainText("\n".join(lines))
 
     def _open_selected_task_result(self) -> None:
@@ -1784,30 +2103,30 @@ class ArqenWindow(QMainWindow):
         if task is None or not task.result:
             return
         dialog = QDialog(self)
-        dialog.setWindowTitle(f"Result — {task.title}")
+        dialog.setWindowTitle(tr("Result — {title}", title=task.title))
         dialog.resize(900, 650)
         layout = QVBoxLayout(dialog)
         result = QTextEdit(readOnly=True)
         result.setMarkdown(clean_result_markup(task.result))
         layout.addWidget(result)
-        close = QPushButton("CLOSE")
+        close = QPushButton(tr("CLOSE"))
         self._style_page_action(close, primary=True)
         close.clicked.connect(dialog.accept)
         layout.addWidget(close, alignment=Qt.AlignmentFlag.AlignLeft)
         dialog.exec()
 
     def _create_mission_task(self) -> None:
-        title, accepted = QInputDialog.getText(self, "New Mission Control task", "Title:")
+        title, accepted = QInputDialog.getText(self, tr("New Mission Control task"), tr("Title:"))
         if not accepted or not title.strip():
             return
-        prompt, accepted = QInputDialog.getMultiLineText(self, "New Mission Control task", "Task:")
+        prompt, accepted = QInputDialog.getMultiLineText(self, tr("New Mission Control task"), tr("Task:"))
         if not accepted or not prompt.strip():
             return
         agents = self.mission_store.list_agents()
         agent_id = None
         if agents:
-            labels = ["No agent (Arqen default)"] + [f"{agent.name} — {agent.role}" for agent in agents if agent.enabled]
-            selected, accepted = QInputDialog.getItem(self, "Tilldela agent", "Agent:", labels, 0, False)
+            labels = [tr("No agent (Arqen default)")] + [f"{agent.name} — {agent.role}" for agent in agents if agent.enabled]
+            selected, accepted = QInputDialog.getItem(self, "Tilldela agent", tr("Agent:"), labels, 0, False)
             if not accepted:
                 return
             if selected != labels[0]:
@@ -1836,19 +2155,19 @@ class ArqenWindow(QMainWindow):
         self.mission_thread.finished.connect(self.mission_thread.deleteLater)
         self.mission_thread.finished.connect(self._mission_thread_finished)
         self.mission_tasks.setEnabled(False)
-        self.mission_details.setPlainText(f"{task.title}\nStatus: RUNNING\n\nArqen is working...")
+        self.mission_details.setPlainText(tr("{title}\nStatus: RUNNING\n\nArqen is working...", title=task.title))
         self.mission_thread.start()
 
     def _delete_queued_task(self) -> None:
         task = self._selected_mission_task()
         if task is None or task.status == "waiting_approval":
-            QMessageBox.information(self, "Delete task", "Tasks waiting for approval cannot be deleted.")
+            QMessageBox.information(self, tr("Delete task"), tr("Tasks waiting for approval cannot be deleted."))
             return
-        warning = "The active model call may take a short moment to stop." if task.status == "running" else "This removes it from Mission Control."
+        warning = tr("The active model call may take a short moment to stop.") if task.status == "running" else tr("This removes it from Mission Control.")
         answer = QMessageBox.question(
             self,
-            "Delete task",
-            f"Delete '{task.title}'?\n\n{warning}",
+            tr("Delete task"),
+            tr("Delete '{title}'?\n\n{warning}", title=task.title, warning=warning),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if answer != QMessageBox.StandardButton.Yes:
@@ -1862,7 +2181,7 @@ class ArqenWindow(QMainWindow):
         if task is None or task.status != "failed":
             return
         if not self.mission_store.retry_task(task.id):
-            QMessageBox.information(self, "Mission Control", "The task has reached its maximum attempts.")
+            QMessageBox.information(self, "Mission Control", tr("The task has reached its maximum attempts."))
             return
         self.refresh_mission_tasks()
         self._show_mission_task()
@@ -1883,24 +2202,19 @@ class ArqenWindow(QMainWindow):
         self.mission_worker = None
 
     def show_session_menu(self, position) -> None:
-        item = self.session_list.itemAt(position)
-        if item is None:
+        if self.selected_session() is None:
             return
-        self.session_list.setCurrentItem(item)
         menu = QMenu(self)
-        open_action = menu.addAction("Open")
-        rename_action = menu.addAction("Rename")
-        delete_action = menu.addAction("Delete")
-        selected = menu.exec(self.session_list.viewport().mapToGlobal(position))
-        if selected == open_action:
-            self.load_selected_session()
-        elif selected == rename_action:
+        rename_action = menu.addAction(tr("Rename"))
+        delete_action = menu.addAction(tr("Delete"))
+        selected = menu.exec(self.chat_session_selector.mapToGlobal(position))
+        if selected == rename_action:
             self.rename_selected_session()
         elif selected == delete_action:
             self.delete_selected_session()
 
     def _create_visualization_dock(self) -> None:
-        self.visualization_dock = QDockWidget("ARQEN VOICE", self)
+        self.visualization_dock = QDockWidget(tr("ARQEN VOICE"), self)
         self.visualization_dock.setObjectName("voiceVisualizationDock")
         self.visualization_dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
         self.visualization_dock.setFeatures(
@@ -1908,19 +2222,46 @@ class ArqenWindow(QMainWindow):
             | QDockWidget.DockWidgetFeature.DockWidgetFloatable
             | QDockWidget.DockWidgetFeature.DockWidgetClosable
         )
-        image_path = data_dir() / "generated" / "Arqen Desktop Voice_2.png"
-        visualization = VoiceVisualizationWidget(image_path)
-        self.visualization_dock.setWidget(visualization)
-        set_audio_level_callback(visualization.set_audio_level)
-        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.visualization_dock)
-        self.visualization_dock.setMinimumSize(300, 240)
-        self.visualization_dock.resize(400, 320)
-        self.visualization_dock.setFloating(True)
+        palette = self.voice_palette = load_voice_palette()
+        self.voice_panel = VoiceVisualizationWidget(palette)
+        container = QWidget()
+        container.setStyleSheet(f"background: {palette.background};")
+        container_layout = QVBoxLayout(container)
+        container_layout.setContentsMargins(0, 0, 0, 12)
+        container_layout.setSpacing(4)
+        container_layout.addWidget(self.voice_panel, 1)
+        controls = QHBoxLayout()
+        controls.setSpacing(8)
+        controls.addStretch(1)
+        for button in (self.mic_button, self.voice_button):
+            button.setCheckable(True)
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.setMinimumWidth(96)
+            button.setStyleSheet(
+                f"QPushButton {{ background: transparent; color: {palette.muted}; border: 1px solid {palette.structure}; "
+                "border-radius: 12px; padding: 4px 12px; font-size: 11px; font-weight: bold; letter-spacing: 1px; }"
+                f"QPushButton:hover {{ color: {palette.text}; border-color: {palette.muted}; }}"
+                f"QPushButton:checked {{ color: {palette.accent}; border-color: {palette.accent}; }}"
+            )
+            controls.addWidget(button)
+        controls.addStretch(1)
+        container_layout.addLayout(controls)
+        self.visualization_dock.setWidget(container)
+        self._sync_voice_controls()
+        set_audio_level_callback(self.voice_panel.set_audio_level)
+        self.microphone.on_level = self.voice_panel.set_input_level
+        self.voice_panel.set_model_label(getattr(self.engine.provider, "model", "") or self.provider_label)
+        # Voice and stats share a column on the right; either can still be
+        # undocked, and then opens where it was last left floating.
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.visualization_dock)
+        self.visualization_dock.setMinimumSize(240, 310)
         self.visualization_dock.installEventFilter(self)
-        self._apply_placement("voice_visualization", self.visualization_dock, 300, 240)
+        self.visualization_dock.topLevelChanged.connect(
+            lambda floating: floating and self._apply_placement("voice_visualization", self.visualization_dock, 240, 270)
+        )
 
     def _create_stats_dock(self) -> None:
-        self.stats_dock = QDockWidget("ARQEN STATS", self)
+        self.stats_dock = QDockWidget(tr("ARQEN STATS"), self)
         self.stats_dock.setObjectName("statsDock")
         self.stats_dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
         self.stats_dock.setFeatures(
@@ -1928,14 +2269,21 @@ class ArqenWindow(QMainWindow):
             | QDockWidget.DockWidgetFeature.DockWidgetFloatable
             | QDockWidget.DockWidgetFeature.DockWidgetClosable
         )
-        self.stats_panel = StatsPanelWidget()
+        self.stats_panel = StatsPanelWidget(self.voice_palette)
         self.stats_dock.setWidget(self.stats_panel)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.stats_dock)
-        self.stats_dock.setMinimumSize(240, 300)
-        self.stats_dock.resize(280, 340)
-        self.stats_dock.setFloating(True)
+        self.splitDockWidget(self.visualization_dock, self.stats_dock, Qt.Orientation.Vertical)
+        self.stats_dock.setMinimumSize(240, 200)
         self.stats_dock.installEventFilter(self)
-        self._apply_placement("stats_panel", self.stats_dock, 240, 300)
+        self.stats_dock.topLevelChanged.connect(
+            lambda floating: floating and self._apply_placement("stats_panel", self.stats_dock, 240, 200)
+        )
+        # Dock sizes only stick once the window has its real geometry.
+        QTimer.singleShot(0, self._size_right_docks)
+
+    def _size_right_docks(self) -> None:
+        self.resizeDocks([self.visualization_dock], [290], Qt.Orientation.Horizontal)
+        self.resizeDocks([self.visualization_dock, self.stats_dock], [340, 300], Qt.Orientation.Vertical)
         self.refresh_stats_panel()
 
     def refresh_stats_panel(self) -> None:
@@ -2016,10 +2364,13 @@ class ArqenWindow(QMainWindow):
         return super().eventFilter(watched, event)
 
     def send_message(self) -> None:
+        if getattr(self, "_voice_pending_send", False):
+            self._voice_pending_send = False
+            self._refresh_voice_state()
         prompt = self.input.text().strip()
         if not prompt:
             return
-        self.append_message("DU", prompt, CyberpunkGreenTheme.accent)
+        self.append_message(tr("YOU"), prompt, CyberpunkGreenTheme.accent)
         # Voice/text confirmations should resolve the visible confirmation
         # dialog instead of being sent back to the model as a new prompt.
         if getattr(self.engine.executor, "_pending", None) is not None:
@@ -2051,6 +2402,9 @@ class ArqenWindow(QMainWindow):
         self.stop_button.setEnabled(True)
         self._cancel_requested = False
         self.engine.should_cancel = lambda: self._cancel_requested
+        self._voice_thinking = True
+        self._voice_pending_send = False
+        self._refresh_voice_state()
         self.thread = QThread(self)
         self.worker = ResponseWorker(self.engine, prompt)
         self.worker.moveToThread(self.thread)
@@ -2067,16 +2421,18 @@ class ArqenWindow(QMainWindow):
         self.thread.finished.connect(self.response_thread_finished)
         self.thread.start()
 
-    def provider_status(self, state: str = "READY", elapsed_ms: float | None = None) -> str:
+    def provider_status(self, state: str | None = None, elapsed_ms: float | None = None) -> str:
+        state = tr("READY") if state is None else state
         provider = getattr(self.engine.provider, "provider_name", self.provider_label)
         model = getattr(self.engine.provider, "model", "")
-        profile = {"private": "LOCAL - OLLAMA", "fast": "FAST", "important": "IMPORTANT", "creative": "CREATIVE"}.get(
+        profile = tr({"private": "LOCAL - OLLAMA", "fast": "FAST", "important": "IMPORTANT", "creative": "CREATIVE"}.get(
             self.profile_name,
             {"local": "PRIVATE", "openrouter": "FAST", "openai": "IMPORTANT"}.get(provider.lower(), "CUSTOM"),
-        )
-        details = f"PROFILE: {profile} // {provider.upper()} / {model}" if model else f"PROFILE: {profile} // {provider.upper()}"
+        ))
+        heading = f"{tr('PROFILE')}: {profile} // {provider.upper()}"
+        details = f"{heading} / {model}" if model else heading
         if getattr(self.engine.provider, "fallback_used", False):
-            details = f"FALLBACK // {details}"
+            details = f"{tr('FALLBACK')} // {details}"
             reason = getattr(self.engine.provider, "fallback_reason", "")
             if reason:
                 details += f" // {reason}"
@@ -2085,14 +2441,16 @@ class ArqenWindow(QMainWindow):
 
     def set_status(self, text: str) -> None:
         upper = text.upper()
+        words = set(re.findall(r"[A-ZÅÄÖ]+", upper))
         color = CyberpunkGreenTheme.muted
-        if "ERROR" in upper:
+        # Both languages are checked: provider and microphone code reports in English.
+        if words & {"ERROR", "FEL"}:
             color = CyberpunkGreenTheme.danger
-        elif "FALLBACK" in upper:
+        elif words & {"FALLBACK", "RESERV"}:
             color = "#ffad4d"
         elif any(name in upper for name in ("OPENAI", "OPENROUTER", "GEMINI", "CLAUDE")):
             color = "#75bfff"
-        elif "READY" in upper or "LOCAL" in upper:
+        elif words & {"READY", "REDO", "LOCAL", "LOKAL"}:
             color = CyberpunkGreenTheme.accent
         self.status.setStyleSheet(f"color: {color}; letter-spacing: 1px;")
         self.status.setText(text)
@@ -2125,19 +2483,27 @@ class ArqenWindow(QMainWindow):
                 name="arqen-auto-speech",
             ).start()
             QTimer.singleShot(250, self._refresh_speech_stop_state)
-        self.set_status(self.provider_status("READY // RESPONSE COMPLETE", elapsed_ms))
+        self.set_status(self.provider_status(tr("READY // RESPONSE COMPLETE"), elapsed_ms))
         self.refresh_stats_panel()
         self.refresh_sessions()
 
     def _set_voice_button_text(self, text: str) -> None:
-        """Update the voice control if the window is still alive."""
-        button = getattr(self, "voice_button", None)
-        if button is None:
-            return
+        """Kept for existing callers; the controls now derive their own label."""
+        self._sync_voice_controls()
+
+    def _sync_voice_controls(self) -> None:
+        """Show the real microphone and voice state on the voice panel's toggles."""
         try:
-            button.setText(text)
-        except RuntimeError:
-            # A response can finish after Qt has deleted the chat controls.
+            recording = self.microphone.recording
+            self.mic_button.setChecked(recording)
+            self.mic_button.setText(tr("● REC") if recording else tr("🎙 MIC"))
+            self.mic_button.setToolTip(tr("Stop microphone recording") if recording else tr("Start microphone recording"))
+            voice_on = bool(self.engine.voice_enabled)
+            self.voice_button.setChecked(voice_on)
+            self.voice_button.setText(tr("🔊 VOICE") if voice_on else tr("🔇 VOICE"))
+            self.voice_button.setToolTip(tr("Turn spoken replies off") if voice_on else tr("Turn spoken replies on"))
+        except (AttributeError, RuntimeError):
+            # A response can finish after Qt has deleted the controls.
             return
 
     def _end_streaming_block(self) -> None:
@@ -2202,22 +2568,24 @@ class ArqenWindow(QMainWindow):
             getattr(self.engine.provider, "fallback_used", False),
             self.engine.turn_usage,
         )
-        self.append_message("FEL", message, CyberpunkGreenTheme.danger)
+        self.append_message(tr("ERROR"), message, CyberpunkGreenTheme.danger)
         self.refresh_stats_panel()
-        self.set_status(self.provider_status("ERROR // REQUEST FAILED"))
+        self.set_status(self.provider_status(tr("ERROR // REQUEST FAILED")))
 
     def response_cancelled(self) -> None:
         self._loading_timer.stop()
-        self.set_status(self.provider_status("STOPPED // RESPONSE DISCARDED"))
+        self.set_status(self.provider_status(tr("STOPPED // RESPONSE DISCARDED")))
 
     def _animate_loading(self) -> None:
         self._loading_phase = (self._loading_phase + 1) % 4
         dots = "." * self._loading_phase
-        self.set_status(self.provider_status(f"WORKING // PROCESSING REQUEST{dots}"))
+        self.set_status(self.provider_status(tr("WORKING // PROCESSING REQUEST") + dots))
 
     def response_thread_finished(self) -> None:
         self.worker.deleteLater()
         self.thread.deleteLater()
+        self._voice_thinking = False
+        self._refresh_voice_state()
         self.input.setEnabled(True)
         self.stop_button.setEnabled(False)
         self.input.setFocus()
@@ -2240,7 +2608,7 @@ class ArqenWindow(QMainWindow):
                 # final check.
                 self._cancel_requested = True
                 thread.requestInterruption()
-            self.set_status(self.provider_status("STOPPED // RESPONSE DISCARDED" if running else "READY"))
+            self.set_status(self.provider_status(tr("STOPPED // RESPONSE DISCARDED") if running else tr("READY")))
             self.stop_button.setEnabled(False)
         except RuntimeError:
             # The response thread may already have been deleted by Qt.
@@ -2250,7 +2618,7 @@ class ArqenWindow(QMainWindow):
         self.engine.voice_enabled = not self.engine.voice_enabled
         if self.engine.voice_enabled:
             self._set_voice_button_text("🔊")
-            self.set_status(self.provider_status("VOICE // ENABLED"))
+            self.set_status(self.provider_status(tr("VOICE // ENABLED")))
         else:
             try:
                 from arqen.tools.speech import stop_speech
@@ -2258,17 +2626,38 @@ class ArqenWindow(QMainWindow):
             except Exception:
                 pass
             self._set_voice_button_text("🔇")
-            self.set_status(self.provider_status("VOICE // DISABLED"))
+            self.set_status(self.provider_status(tr("VOICE // DISABLED")))
+
+    _MIC_BUSY_STATUSES = ("STOPPING", "LOADING MODEL", "DECODING")
+
+    @pyqtSlot(str)
+    def _on_microphone_status(self, status: str) -> None:
+        self._voice_transcribing = any(busy in status for busy in self._MIC_BUSY_STATUSES)
+        self._refresh_voice_state()
+
+    def _refresh_voice_state(self) -> None:
+        """Pick the voice ring's base state; speaking is detected by the ring itself."""
+        panel = getattr(self, "voice_panel", None)
+        if panel is None:
+            return
+        if self.microphone.recording:
+            state = "listening"
+        elif (
+            getattr(self, "_voice_thinking", False)
+            or getattr(self, "_voice_transcribing", False)
+            or getattr(self, "_voice_pending_send", False)
+        ):
+            state = "thinking"
+        else:
+            state = "idle"
+        panel.set_state(state)
 
     def toggle_microphone(self) -> None:
         if self.microphone.recording:
             self.microphone.stop()
-            self.mic_button.setText("🎙")
-            self.mic_button.setToolTip("Start microphone recording")
         else:
-            if self.microphone.start():
-                self.mic_button.setText("⏺")
-                self.mic_button.setToolTip("Stop microphone recording")
+            self.microphone.start()
+        self._sync_voice_controls()
 
     @pyqtSlot(str)
     def _handle_microphone_result(self, text: str) -> None:
@@ -2276,13 +2665,17 @@ class ArqenWindow(QMainWindow):
         cleaned = text.strip()
         if not cleaned:
             return
+        # Bridges the gap until send_message starts, so the ring does not
+        # blink back to idle between transcription and the response.
+        self._voice_pending_send = True
+        self._refresh_voice_state()
         self.input.setText(cleaned)
         QTimer.singleShot(100, self.send_message)
 
     def show_tool_request(self, name: str) -> None:
-        self.set_status(f"TOOL // {name.upper()}")
+        self.set_status(tr("TOOL // {name}", name=name.upper()))
         self._end_streaming_block()
-        self.append_message("TOOL", name, CyberpunkGreenTheme.muted)
+        self.append_message(tr("TOOL"), name, CyberpunkGreenTheme.muted)
 
     def append_message(self, sender: str, content: str, color: str) -> None:
         content = re.sub(r"\\\\?n", "\n", content)
@@ -2337,24 +2730,19 @@ class ArqenWindow(QMainWindow):
         return result[:-4] if result.endswith("<br>") else result
 
     def refresh_sessions(self) -> None:
+        selector = getattr(self, "chat_session_selector", None)
+        if selector is None:
+            return
         try:
-            self.session_list.clear()
-            selector = getattr(self, "chat_session_selector", None)
-            if selector is not None:
-                selector.blockSignals(True)
-                selector.clear()
+            selector.blockSignals(True)
+            selector.clear()
             for session in self.engine.session_store.list_sessions():
-                item = QListWidgetItem(session.title)
-                item.setData(Qt.ItemDataRole.UserRole, session.session_id)
-                self.session_list.addItem(item)
-                if selector is not None:
-                    selector.addItem(session.title, session.session_id)
-            if selector is not None:
-                current_id = self.engine.session.session_id if self.engine.session else None
-                current_index = selector.findData(current_id)
-                if current_index >= 0:
-                    selector.setCurrentIndex(current_index)
-                selector.blockSignals(False)
+                selector.addItem(session.title, session.session_id)
+            current_id = self.engine.session.session_id if self.engine.session else None
+            current_index = selector.findData(current_id)
+            if current_index >= 0:
+                selector.setCurrentIndex(current_index)
+            selector.blockSignals(False)
         except RuntimeError:
             # A late response callback may run after Qt has deleted the chat UI.
             return
@@ -2363,50 +2751,40 @@ class ArqenWindow(QMainWindow):
         selector = getattr(self, "chat_session_selector", None)
         if selector is None:
             return
-        session_id = selector.itemData(index)
-        if not session_id:
-            return
-        for row in range(self.session_list.count()):
-            item = self.session_list.item(row)
-            if item.data(Qt.ItemDataRole.UserRole) == session_id:
-                self.session_list.setCurrentItem(item)
-                self.load_selected_session()
-                return
+        selector.setCurrentIndex(index)
+        self.load_selected_session()
 
     def create_new_session(self) -> None:
-        title, accepted = QInputDialog.getText(self, "New chat", "Title:")
+        title, accepted = QInputDialog.getText(self, tr("New chat"), tr("Title:"))
         if not accepted:
             return
-        self.engine.new_session(title.strip() or "New chat")
+        self.engine.new_session(title.strip() or tr("New chat"))
         self.output.clear()
-        self.status.setText("READY // NEW SESSION")
+        self.set_status(tr("READY // NEW SESSION"))
         self.refresh_sessions()
 
     def load_selected_session(self) -> None:
-        item = self.session_list.currentItem()
-        if item is None:
+        selected = self.selected_session()
+        if selected is None:
             return
-        session_id = item.data(Qt.ItemDataRole.UserRole)
-        matches = [s for s in self.engine.session_store.list_sessions() if s.session_id == session_id]
-        if not matches:
-            return
-        session = self.engine.load_session(matches[0].session_id)
+        session = self.engine.load_session(selected.session_id)
         self.output.clear()
         for message in session.messages:
             if message.role == "user":
-                self.append_message("DU", message.content, CyberpunkGreenTheme.accent)
+                self.append_message(tr("YOU"), message.content, CyberpunkGreenTheme.accent)
             elif message.role == "assistant":
                 self.append_message("ARQEN", message.content, CyberpunkGreenTheme.text)
             elif message.role == "tool":
-                self.append_message("TOOL RESULT", message.content, CyberpunkGreenTheme.muted)
+                self.append_message(tr("TOOL RESULT"), message.content, CyberpunkGreenTheme.muted)
                 self.show_generated_image(message.content)
-        self.status.setText("READY // SESSION LOADED")
+        self.set_status(tr("READY // SESSION LOADED"))
 
     def selected_session(self):
-        item = self.session_list.currentItem()
-        if item is None:
+        """The chat picked in the session bar, looked up fresh from the store."""
+        selector = getattr(self, "chat_session_selector", None)
+        session_id = selector.currentData() if selector is not None else None
+        if not session_id:
             return None
-        session_id = item.data(Qt.ItemDataRole.UserRole)
         matches = [s for s in self.engine.session_store.list_sessions() if s.session_id == session_id]
         return matches[0] if matches else None
 
@@ -2414,7 +2792,7 @@ class ArqenWindow(QMainWindow):
         session = self.selected_session()
         if session is None:
             return
-        title, accepted = QInputDialog.getText(self, "Rename", "New name:", text=session.title)
+        title, accepted = QInputDialog.getText(self, tr("Rename"), tr("New name:"), text=session.title)
         if accepted and title.strip():
             session.title = title.strip()
             self.engine.session_store.save(session)
@@ -2428,8 +2806,8 @@ class ArqenWindow(QMainWindow):
             return
         answer = QMessageBox.question(
             self,
-            "Delete chat",
-            f"Delete '{session.title}'?",
+            tr("Delete chat"),
+            tr("Delete '{title}'?", title=session.title),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if answer != QMessageBox.StandardButton.Yes:
@@ -2441,14 +2819,14 @@ class ArqenWindow(QMainWindow):
         self.refresh_sessions()
 
     def show_confirmation(self, name: str, arguments: dict | None = None) -> None:
-        self.set_status(f"CONFIRMATION REQUIRED // {name.upper()}")
+        self.set_status(tr("CONFIRMATION REQUIRED // {name}", name=name.upper()))
         details = ""
         if arguments:
             details = " | " + ", ".join(
                 f"{key}: {str(value)[:160]}" for key, value in arguments.items()
             )
         self._end_streaming_block()
-        self.append_message("CONFIRM", f"{name}{details}", CyberpunkGreenTheme.accent)
+        self.append_message(tr("CONFIRM"), f"{name}{details}", CyberpunkGreenTheme.accent)
         self.confirm_button.setVisible(True)
         self.cancel_button.setVisible(True)
         self.confirm_button.setEnabled(True)
@@ -2460,9 +2838,9 @@ class ArqenWindow(QMainWindow):
         if not accepted:
             result = self.engine.confirm_pending_tool(False)
             self.output.append(f"<b>ARQEN:</b> {result}")
-            self.set_status("READY // CONFIRMATION CANCELLED")
+            self.set_status(tr("READY // CONFIRMATION CANCELLED"))
             return
-        self.set_status(self.provider_status("WORKING // RUNNING CONFIRMED TOOL"))
+        self.set_status(self.provider_status(tr("WORKING // RUNNING CONFIRMED TOOL")))
         self._end_streaming_block()
         self._cancel_requested = False
         self.engine.should_cancel = lambda: self._cancel_requested
@@ -2491,7 +2869,7 @@ class ArqenWindow(QMainWindow):
         # image path is taken from the tool result rather than from the reply.
         self.show_generated_image(self.engine.last_tool_output or result)
         self.refresh_stats_panel()
-        self.set_status("READY // CONFIRMATION RESOLVED")
+        self.set_status(tr("READY // CONFIRMATION RESOLVED"))
 
     def show_generated_image(self, result: str) -> None:
         image_match = re.search(r"Bild skapad:\s*(.+)$", result)
@@ -2502,13 +2880,13 @@ class ArqenWindow(QMainWindow):
                 self.output.append(f"<div style='margin:8px 0;'><img src='{image_url}' width='640'></div>")
 
     def confirmation_failed(self, message: str) -> None:
-        self.append_message("FEL", message, CyberpunkGreenTheme.danger)
-        self.set_status("ERROR // CONFIRMATION FAILED")
+        self.append_message(tr("ERROR"), message, CyberpunkGreenTheme.danger)
+        self.set_status(tr("ERROR // CONFIRMATION FAILED"))
 
     def open_settings(self) -> None:
         config = load_provider_config()
         dialog = QDialog(self)
-        dialog.setWindowTitle("Arqen Settings")
+        dialog.setWindowTitle(tr("Arqen Settings"))
         dialog.setMinimumSize(960, 760)
         dialog.setStyleSheet(CyberpunkGreenTheme.stylesheet())
         dialog_layout = QVBoxLayout(dialog)
@@ -2529,35 +2907,35 @@ class ArqenWindow(QMainWindow):
             tab_form.setVerticalSpacing(12)
         stats_layout = QVBoxLayout(stats_tab)
         stats_layout.setContentsMargins(10, 12, 10, 12)
-        tabs.addTab(profile_tab, "Profile")
-        tabs.addTab(provider_tab, "Provider")
-        tabs.addTab(workspace_tab, "Arbetsyta")
-        tabs.addTab(fallback_tab, "Fallback")
-        tabs.addTab(stats_tab, "Statistik")
+        tabs.addTab(profile_tab, tr("Profile"))
+        tabs.addTab(provider_tab, tr("Provider"))
+        tabs.addTab(workspace_tab, tr("Workspace"))
+        tabs.addTab(fallback_tab, tr("Fallback"))
+        tabs.addTab(stats_tab, tr("Statistics"))
         dialog_layout.addWidget(tabs, 1)
 
         provider = QComboBox()
-        provider_items = [("Local Ollama", "local"), ("Arqen Remote", "arqen-remote"), ("OpenAI", "openai"), ("OpenRouter", "openrouter"), ("Gemini", "gemini"), ("Claude", "claude"), ("Demo", "demo")]
+        provider_items = [(tr("Local Ollama"), "local"), ("Arqen Remote", "arqen-remote"), ("OpenAI", "openai"), ("OpenRouter", "openrouter"), ("Gemini", "gemini"), ("Claude", "claude"), ("Demo", "demo")]
         for label, value in provider_items:
             provider.addItem(label, value)
         provider.setCurrentIndex(max(0, provider.findData(config.name)))
         profile = QComboBox()
-        profile.addItem("Private – Ollama", "private")
-        profile.addItem("Fast – OpenRouter", "fast")
+        profile.addItem(tr("Private – Ollama"), "private")
+        profile.addItem(tr("Fast – OpenRouter"), "fast")
         profile.addItem("Viktigt – OpenAI", "important")
         profile.addItem("Kreativt arbete – OpenRouter", "creative")
         saved_profile = {"private": "private", "fast": "fast", "important": "important", "creative": "creative"}.get(config.profile_name, "")
         if saved_profile:
             profile.setCurrentIndex(profile.findData(saved_profile))
-        profile_form.addRow("Profile", profile)
+        profile_form.addRow(tr("Profile"), profile)
         profile_hint = QLabel()
         profile_hint.setWordWrap(True)
-        profile_form.addRow("Beskrivning", profile_hint)
+        profile_form.addRow(tr("Description"), profile_hint)
         profile_descriptions = {
-            "private": "Local and private. Uses Ollama without cloud fallback.",
-            "fast": "Fast everyday profile. Uses OpenRouter without automatic fallback.",
-            "important": "For important tasks. Uses OpenAI without automatic fallback.",
-            "creative": "For ideas, writing and creative workflows via Gemini.",
+            "private": tr("Local and private. Uses Ollama without cloud fallback."),
+            "fast": tr("Fast everyday profile. Uses OpenRouter without automatic fallback."),
+            "important": tr("For important tasks. Uses OpenAI without automatic fallback."),
+            "creative": tr("For ideas, writing and creative workflows via Gemini."),
         }
         profile_hint.setText(profile_descriptions[profile.currentData()])
         profile.currentIndexChanged.connect(
@@ -2568,20 +2946,20 @@ class ArqenWindow(QMainWindow):
         model.setMinimumWidth(520)
         model.addItem(f"[{config.name.upper()}] {config.model}", config.model)
         model_search = QLineEdit()
-        model_search.setPlaceholderText("Search models...")
-        provider_form.addRow("Search models", model_search)
+        model_search.setPlaceholderText(tr("Search models..."))
+        provider_form.addRow(tr("Search models"), model_search)
         model_search.textChanged.connect(lambda text: self.filter_model_choices(model, text))
         model_search.returnPressed.connect(lambda: self.filter_model_choices(model, model_search.text()))
         base_url = QLineEdit(config.base_url)
         timeout = QLineEdit(str(config.timeout))
         api_key = QLineEdit(config.api_key)
         api_key.setEchoMode(QLineEdit.EchoMode.Password)
-        provider_form.addRow("Provider", provider)
-        provider_form.addRow("Modell", model)
+        provider_form.addRow(tr("Provider"), provider)
+        provider_form.addRow(tr("Model"), model)
         provider_form.addRow("URL", base_url)
-        provider_form.addRow("API key", api_key)
-        provider_form.addRow("Timeout", timeout)
-        fallback_enabled = QCheckBox("Enable fallback on provider error")
+        provider_form.addRow(tr("API key"), api_key)
+        provider_form.addRow(tr("Timeout"), timeout)
+        fallback_enabled = QCheckBox(tr("Enable fallback on provider error"))
         fallback_enabled.setChecked(config.fallback_enabled)
         fallback_provider = QComboBox()
         for label, value in provider_items:
@@ -2589,17 +2967,17 @@ class ArqenWindow(QMainWindow):
                 fallback_provider.addItem(label, value)
         fallback_provider.setCurrentIndex(max(0, fallback_provider.findData(config.fallback_provider)))
         fallback_timeout = QLineEdit(str(config.fallback_timeout))
-        fallback_form.addRow("Fallback", fallback_enabled)
-        fallback_form.addRow("Reservprovider", fallback_provider)
-        fallback_form.addRow("Fallback-timeout (s)", fallback_timeout)
+        fallback_form.addRow(tr("Fallback"), fallback_enabled)
+        fallback_form.addRow(tr("Fallback provider"), fallback_provider)
+        fallback_form.addRow(tr("Fallback timeout (s)"), fallback_timeout)
         provider_info = QLabel(self.provider_overview(fallback_enabled.isChecked()))
         provider_info.setWordWrap(True)
-        fallback_form.addRow("Provider status", provider_info)
-        stats_button = QPushButton("VIEW PROVIDER STATISTICS")
+        fallback_form.addRow(tr("Provider status"), provider_info)
+        stats_button = QPushButton(tr("VIEW PROVIDER STATISTICS"))
         stats_button.setObjectName("secondaryButton")
         stats_button.clicked.connect(self.show_provider_metrics)
         stats_layout.addWidget(stats_button)
-        reset_stats = QPushButton("RESET STATISTICS")
+        reset_stats = QPushButton(tr("RESET STATISTICS"))
         reset_stats.setObjectName("secondaryButton")
         reset_stats.clicked.connect(self.reset_provider_metrics)
         stats_layout.addWidget(reset_stats)
@@ -2622,7 +3000,7 @@ class ArqenWindow(QMainWindow):
             )
         )
 
-        apply_profile = QPushButton("APPLY PROFILE")
+        apply_profile = QPushButton(tr("APPLY PROFILE"))
         apply_profile.setObjectName("secondaryButton")
         apply_profile.clicked.connect(
             lambda: self.apply_provider_profile(
@@ -2634,33 +3012,34 @@ class ArqenWindow(QMainWindow):
 
         workspace = QLineEdit(str(load_workspace_root()))
         workspace.setMinimumWidth(520)
-        workspace_form.addRow("Workspace", workspace)
-        browse = QPushButton("BROWSE FOLDER")
+        workspace_form.addRow(tr("Workspace"), workspace)
+        browse = QPushButton(tr("BROWSE FOLDER"))
         browse.setObjectName("secondaryButton")
         browse.clicked.connect(lambda: self.choose_workspace(dialog, workspace))
         workspace_form.addRow(browse)
-        workspace_hint = QLabel(
+        workspace_hint = QLabel(tr(
             "The folder Arqen reads and writes files in. It only affects tools — "
             "settings, chats and memory remain inside the application "
-            f"({APP_ROOT}). Leave it empty to use the application folder."
-        )
+            "({root}). Leave it empty to use the application folder.",
+            root=APP_ROOT,
+        ))
         workspace_hint.setWordWrap(True)
-        workspace_form.addRow("About", workspace_hint)
+        workspace_form.addRow(tr("About"), workspace_hint)
 
-        refresh_models = QPushButton("FETCH MODELS")
+        refresh_models = QPushButton(tr("FETCH MODELS"))
         refresh_models.setObjectName("secondaryButton")
         refresh_models.clicked.connect(lambda: self.load_local_models(model, base_url.text(), api_key.text(), provider.currentData()))
         actions_layout = QHBoxLayout()
         actions_layout.addWidget(refresh_models)
 
-        test_connection = QPushButton("TEST CONNECTION")
+        test_connection = QPushButton(tr("TEST CONNECTION"))
         test_connection.setObjectName("secondaryButton")
         test_connection.clicked.connect(
             lambda: self.test_provider_connection(provider.currentData(), model.currentData() or model.currentText(), base_url.text(), api_key.text())
         )
         actions_layout.addWidget(test_connection)
 
-        save = QPushButton("SAVE")
+        save = QPushButton(tr("SAVE"))
         save.setObjectName("primaryButton")
         save.clicked.connect(
             lambda: self.save_settings(
@@ -2707,29 +3086,28 @@ class ArqenWindow(QMainWindow):
 
     def provider_overview(self, fallback_enabled: bool | None = None) -> str:
         provider = getattr(self.engine.provider, "provider_name", self.provider_label).upper()
-        model = getattr(self.engine.provider, "model", "") or "unknown model"
+        model = getattr(self.engine.provider, "model", "") or tr("unknown model")
         used = getattr(self.engine.provider, "fallback_used", False)
         if fallback_enabled is True and not used:
-            fallback = "enabled, not used yet"
+            fallback = tr("enabled, not used yet")
         elif fallback_enabled is False:
-            fallback = "disabled"
+            fallback = tr("disabled")
         else:
-            fallback = "currently used" if used else "not enabled"
-        elapsed = f"{self.last_response_ms / 1000:.1f} s" if self.last_response_ms is not None else "no measurement yet"
+            fallback = tr("currently used") if used else tr("not enabled")
+        elapsed = f"{self.last_response_ms / 1000:.1f} s" if self.last_response_ms is not None else tr("no measurement yet")
         metrics = self.provider_metrics._load().get(f"{provider.lower()}/{model}", {})
         avg_ms = metrics.get("total_ms", 0) / metrics.get("requests", 1)
-        return (
-            f"Aktiv: {provider} / {model}\n"
-            f"Fallback: {fallback}\n"
-            f"Senaste svarstid: {elapsed}\n"
-            f"Fallback switches: {self.fallback_count}\n"
-            f"Historik: {metrics.get('requests', 0)} svar, genomsnitt {avg_ms / 1000:.1f} s"
+        return tr(
+            "Active: {provider} / {model}\nFallback: {fallback}\nLatest response time: {elapsed}\n"
+            "Fallback switches: {switches}\nHistory: {requests} responses, average {average:.1f} s",
+            provider=provider, model=model, fallback=fallback, elapsed=elapsed,
+            switches=self.fallback_count, requests=metrics.get("requests", 0), average=avg_ms / 1000,
         )
 
     def show_provider_metrics(self) -> None:
         metrics = self.provider_metrics._load()
         if not metrics:
-            text = "No provider statistics available yet."
+            text = tr("No provider statistics available yet.")
         else:
             rows = []
             sorted_metrics = sorted(
@@ -2740,27 +3118,28 @@ class ArqenWindow(QMainWindow):
                 requests = item.get("requests", 0)
                 average = item.get("total_ms", 0) / requests / 1000 if requests else 0
                 success_rate = (item.get("successes", 0) / requests * 100) if requests else 0
-                rows.append(
-                    f"{key}\n"
-                    f"  Requests: {requests} | Successful: {item.get('successes', 0)} | Errors: {item.get('errors', 0)} | Success rate: {success_rate:.0f}%\n"
-                    f"  Genomsnitt: {average:.1f} s | Fallback: {item.get('fallbacks', 0)}"
-                )
+                rows.append(tr(
+                    "{key}\n  Requests: {requests} | Successful: {successes} | Errors: {errors} | Success rate: {rate:.0f}%\n"
+                    "  Average: {average:.1f} s | Fallback: {fallbacks}",
+                    key=key, requests=requests, successes=item.get("successes", 0), errors=item.get("errors", 0),
+                    rate=success_rate, average=average, fallbacks=item.get("fallbacks", 0),
+                ))
             text = "\n\n".join(rows)
-        QMessageBox.information(self, "Provider statistics", text)
+        QMessageBox.information(self, tr("Provider statistics"), text)
 
     def reset_provider_metrics(self) -> None:
         answer = QMessageBox.question(
             self,
-            "Reset statistics",
-            "Delete all saved provider statistics?",
+            tr("Reset statistics"),
+            tr("Delete all saved provider statistics?"),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if answer == QMessageBox.StandardButton.Yes:
             self.provider_metrics.reset()
-            QMessageBox.information(self, "Provider statistics", "Provider statistics have been reset.")
+            QMessageBox.information(self, tr("Provider statistics"), tr("Provider statistics have been reset."))
 
     def choose_workspace(self, dialog: QDialog, field: QLineEdit) -> None:
-        chosen = QFileDialog.getExistingDirectory(dialog, "Choose workspace", field.text() or str(APP_ROOT))
+        chosen = QFileDialog.getExistingDirectory(dialog, tr("Choose workspace"), field.text() or str(APP_ROOT))
         if chosen:
             field.setText(str(Path(chosen)))
 
@@ -2781,14 +3160,14 @@ class ArqenWindow(QMainWindow):
             save_provider_config(config)
             chosen = workspace.strip()
             if chosen and not Path(chosen).expanduser().is_dir():
-                raise ValueError(f"Workspace folder does not exist: {chosen}")
+                raise ValueError(tr("Workspace folder does not exist: {path}", path=chosen))
             save_workspace_root(chosen)
             self.provider_label = config.name
             self.profile_name = profile_name
-            self.set_status(self.provider_status("READY // PROVIDER UPDATED"))
+            self.set_status(self.provider_status(tr("READY // PROVIDER UPDATED")))
             dialog.accept()
         except (ValueError, TypeError) as exc:
-            QMessageBox.warning(dialog, "Invalid settings", str(exc))
+            QMessageBox.warning(dialog, tr("Invalid settings"), str(exc))
 
     @staticmethod
     def filter_model_choices(model_box: QComboBox, query: str) -> None:
@@ -2822,7 +3201,7 @@ class ArqenWindow(QMainWindow):
                 selected = models.index(current) if current in models else 0
                 model_box.setCurrentIndex(selected)
         except Exception as exc:
-            QMessageBox.warning(self, "Could not fetch models", str(exc))
+            QMessageBox.warning(self, tr("Could not fetch models"), str(exc))
 
     def configure_provider_fields(self, provider: str, model_box: QComboBox, base_url: QLineEdit) -> None:
         defaults = {
@@ -2848,13 +3227,13 @@ class ArqenWindow(QMainWindow):
         model_box.addItem(f"[{provider.upper()}] {model}", model)
         model_box.setCurrentText(model)
         if provider in {"openai", "openrouter"}:
-            model_box.setToolTip("Click FETCH MODELS to load provider models")
+            model_box.setToolTip(tr("Click FETCH MODELS to load provider models"))
         else:
-            model_box.setToolTip("Type or select a model for this provider")
+            model_box.setToolTip(tr("Type or select a model for this provider"))
 
     def test_provider_connection(self, provider: str, model: str, base_url: str, api_key: str = "") -> None:
         if provider == "demo":
-            QMessageBox.information(self, "Connection OK", "The demo provider is available.")
+            QMessageBox.information(self, tr("Connection OK"), tr("The demo provider is available."))
             return
         try:
             url = f"{base_url.rstrip('/')}/models"
@@ -2876,9 +3255,9 @@ class ArqenWindow(QMainWindow):
                 }
             if model not in available:
                 raise RuntimeError(f"Modellen finns inte hos providern: {model}")
-            QMessageBox.information(self, "Connection OK", f"Provider responded and the model exists:\n{model}")
+            QMessageBox.information(self, tr("Connection OK"), tr("Provider responded and the model exists:\n{model}", model=model))
         except Exception as exc:
-            QMessageBox.warning(self, "Connection failed", str(exc))
+            QMessageBox.warning(self, tr("Connection failed"), str(exc))
 
     @staticmethod
     def model_label(model_id: str) -> str:
