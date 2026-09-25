@@ -16,6 +16,20 @@ _STOPWORDS = frozenset("""
 """.split())
 
 
+# Approved memories are read back to the model, so anything that looks like a
+# credential is kept out before it can be suggested at all.
+_SECRET = re.compile(
+    r"lösenord|password|passwd|api[\s_-]?nyckel|api[\s_-]?key|\btoken\b|\bsecret\b|pin[\s-]?kod"
+    r"|\bsk-[A-Za-z0-9_-]{12,}|\b[A-Za-z0-9_-]{32,}\b",
+    re.IGNORECASE,
+)
+
+
+def looks_secret(text: str) -> bool:
+    """Whether ``text`` looks like a password, key or other credential."""
+    return bool(_SECRET.search(text))
+
+
 def _terms(text: str) -> set[str]:
     """The content words of ``text``, lowercased, without stopwords."""
     return {

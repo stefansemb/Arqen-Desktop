@@ -44,8 +44,8 @@ gammal utcheckning med egen `data/`; en `git pull` där gör den till Kontrollru
 
 ## Viktiga nästa åtgärder
 
-1. `reflect` i Memory 2.0 och kostnad/nyckelhantering i Tool Gateway återstår,
-   se status under respektive spår nedan.
+1. Kostnad per anrop och nyckelhantering i Tool Gateway återstår, se status
+   under spåret nedan. Memory 2.0 är i stort sett klart.
 
 Reserven (`FallbackProvider`) har `supports_tools`, `respond_stream` och 90 s
 timeout. Profilval i Inställningar skrev tidigare in 10 s; nu används
@@ -121,7 +121,15 @@ att införa en tung extern databas direkt.
 - Klart: Minne-vyn visar förslag överst med Godkänn/Redigera/Avvisa, godkända
   minnen under, och kan markera föråldrad/återställa. Menyn visar antalet
   förslag ("Minne · 2").
-- Kvar: `reflect` räknar bara status; den sammanfattar inga lärdomar än.
+- Klart: reflektion (`arqen/core/reflection.py`). Knappen REFLEKTERA i
+  Minne-vyn läser de 30 senaste uppgifterna (status, fel, avvisade
+  godkännanden), användarens egna meddelanden i de 10 senaste chattarna och
+  befintligt minne, och ber modellen om högst 5 bestående lärdomar. De sparas
+  som förslag (källa "reflect") och godkänns som andra förslag; en reflektion
+  skriver aldrig in minnen själv. Ett modellanrop per körning, i egen tråd och
+  med egen provider. Inget underlag betyder inget anrop.
+  `MemoryStore.reflect()` är kvar som statusräkning.
+- Kvar vid behov: schemalagd reflektion, t.ex. veckovis.
 - Kvar vid behov: bättre matchning än ord (t.ex. embeddings) om minnet växer
   sig stort.
 
@@ -158,7 +166,7 @@ ger säkerhets-, kostnads- och integrationsgrund för framtida agentfunktioner.
 
 ## Teststatus
 
-131 tester, alla gröna. Kör efter ändringar:
+137 tester, alla gröna. Kör efter ändringar:
 
 ```powershell
 python -m compileall -q arqen

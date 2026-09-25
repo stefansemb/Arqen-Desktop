@@ -1,16 +1,7 @@
-import re
 from typing import Any
 
-from arqen.core.memory_store import MemoryStore
+from arqen.core.memory_store import MemoryStore, looks_secret
 from arqen.tools.base import Tool
-
-# Proposals are read back to the model once approved, so anything that looks
-# like a credential is refused before it can reach the memory file.
-_SECRET = re.compile(
-    r"lösenord|password|passwd|api[\s_-]?nyckel|api[\s_-]?key|\btoken\b|\bsecret\b|pin[\s-]?kod"
-    r"|\bsk-[A-Za-z0-9_-]{12,}|\b[A-Za-z0-9_-]{32,}\b",
-    re.IGNORECASE,
-)
 
 
 class ProposeMemoryTool(Tool):
@@ -43,7 +34,7 @@ class ProposeMemoryTool(Tool):
             return "The fact is empty."
         if len(fact) > 300:
             return "The fact is too long; keep it to one short sentence."
-        if _SECRET.search(fact):
+        if looks_secret(fact):
             return "Not suggested: it looks like a password, key or other secret."
         return None
 

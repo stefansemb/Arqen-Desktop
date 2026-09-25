@@ -157,6 +157,22 @@ class MissionWorker(QObject):
             self.failed.emit(str(exc))
 
 
+class ReflectionWorker(QObject):
+    finished = pyqtSignal(object)
+    failed = pyqtSignal(str)
+
+    def __init__(self, run) -> None:
+        super().__init__()
+        self._run = run
+
+    @pyqtSlot()
+    def run(self) -> None:
+        try:
+            self.finished.emit(self._run())
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+
 class ConfirmationWorker(QObject):
     finished = pyqtSignal(str)
     failed = pyqtSignal(str)
@@ -1192,9 +1208,25 @@ class ArqenWindow(QMainWindow):
         page_layout = QVBoxLayout(page)
         page_layout.setContentsMargins(18, 18, 18, 18)
         page_layout.setSpacing(8)
-        page_layout.addWidget(QLabel(tr("MEMORY"), objectName="title"))
+        heading = QHBoxLayout()
+        heading.addWidget(QLabel(tr("MEMORY"), objectName="title"))
+        heading.addStretch(1)
+        self.memory_reflect_button = QPushButton(tr("REFLECT"))
+        self.memory_reflect_button.setToolTip(tr(
+            "Arqen reads recent tasks and chats and suggests lasting lessons. Costs one model call."
+        ))
+        self.memory_reflect_button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self._style_page_action(self.memory_reflect_button, primary=True)
+        self.memory_reflect_button.clicked.connect(self._start_reflection)
+        heading.addWidget(self.memory_reflect_button)
+        page_layout.addLayout(heading)
         self.memory_summary = QLabel("", objectName="status")
         page_layout.addWidget(self.memory_summary)
+        self.memory_reflect_status = QLabel("")
+        self.memory_reflect_status.setWordWrap(True)
+        self.memory_reflect_status.setStyleSheet("color: #9fce20; font-size: 11px;")
+        self.memory_reflect_status.hide()
+        page_layout.addWidget(self.memory_reflect_status)
 
         self.memory_proposals_heading = QLabel(tr("SUGGESTIONS TO REVIEW"), objectName="sectionLabel")
         page_layout.addWidget(self.memory_proposals_heading)
@@ -1541,7 +1573,8 @@ class ArqenWindow(QMainWindow):
         content.setWordWrap(True)
         content.setStyleSheet("color: #f2f0eb; font-size: 12px;")
         text.addWidget(content)
-        origin = QLabel(tr("Suggested by Arqen") if record.source == "arqen" else tr("Suggested"))
+        origin_text = {"arqen": tr("Suggested by Arqen"), "reflect": tr("Suggested after reflection")}
+        origin = QLabel(origin_text.get(record.source, tr("Suggested")))
         origin.setStyleSheet("color: #8d969d; font-size: 10px;")
         text.addWidget(origin)
         row.addLayout(text, 1)
@@ -1573,6 +1606,56 @@ class ArqenWindow(QMainWindow):
             self._refresh_memory_view()
             return
         self._memory_proposals_seen = proposals
+
+    def _start_reflection(self) -> None:
+        if getattr(self, "reflection_thread", None) is not None:
+            return
+        self.memory_reflect_button.setEnabled(False)
+        self._show_reflection_status(tr("Reflecting on recent tasks and chats..."))
+
+        def run():
+            # A provider of its own, like task runs: nothing here touches the chat.
+            from arqen.core.reflection import reflect
+
+            provider = create_provider(load_provider_config())
+            return reflect(provider, MemoryStore(), getattr(self, "mission_store", None), self.engine.session_store)
+
+        self.reflection_thread = QThread(self)
+        self.reflection_worker = ReflectionWorker(run)
+        self.reflection_worker.moveToThread(self.reflection_thread)
+        self.reflection_thread.started.connect(self.reflection_worker.run)
+        self.reflection_worker.finished.connect(self._reflection_finished)
+        self.reflection_worker.failed.connect(self._reflection_failed)
+        self.reflection_worker.finished.connect(self.reflection_thread.quit)
+        self.reflection_worker.failed.connect(self.reflection_thread.quit)
+        self.reflection_thread.finished.connect(self.reflection_worker.deleteLater)
+        self.reflection_thread.finished.connect(self.reflection_thread.deleteLater)
+        self.reflection_thread.finished.connect(self._reflection_thread_finished)
+        self.reflection_thread.start()
+
+    def _show_reflection_status(self, text: str) -> None:
+        self.memory_reflect_status.setText(text)
+        self.memory_reflect_status.show()
+
+    def _reflection_finished(self, result) -> None:
+        if not result.had_sources:
+            message = tr("Nothing to reflect on yet: no tasks or chats.")
+        elif len(result.added) == 1:
+            message = tr("Arqen found one new suggestion. Review it below.")
+        elif result.added:
+            message = tr("Arqen found {count} new suggestions. Review them below.", count=len(result.added))
+        else:
+            message = tr("No new lessons this time.")
+        self._show_reflection_status(message)
+        self._refresh_memory_view()
+
+    def _reflection_failed(self, message: str) -> None:
+        self._show_reflection_status(tr("Reflection failed: {error}", error=message))
+
+    def _reflection_thread_finished(self) -> None:
+        self.reflection_thread = None
+        self.reflection_worker = None
+        self.memory_reflect_button.setEnabled(True)
 
     def _approve_memory(self, fact: str) -> None:
         MemoryStore().update(fact, fact, status="approved", confidence=1.0)

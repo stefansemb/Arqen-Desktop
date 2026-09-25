@@ -285,6 +285,17 @@ _SV: dict[str, str] = {
     "{approved} approved  ·  {proposed} suggested  ·  {obsolete} obsolete":
         "Godkända: {approved}  ·  Förslag: {proposed}  ·  Föråldrade: {obsolete}",
     "Suggested by Arqen": "Föreslaget av Arqen",
+    "Suggested after reflection": "Föreslaget efter reflektion",
+    "REFLECT": "REFLEKTERA",
+    "Arqen reads recent tasks and chats and suggests lasting lessons. Costs one model call.":
+        "Arqen läser senaste uppgifter och chattar och föreslår bestående lärdomar. Kostar ett modellanrop.",
+    "Reflecting on recent tasks and chats...": "Reflekterar över senaste uppgifter och chattar...",
+    "Nothing to reflect on yet: no tasks or chats.": "Inget att reflektera över än: inga uppgifter eller chattar.",
+    "Arqen found one new suggestion. Review it below.": "Arqen hittade ett nytt förslag. Granska det nedan.",
+    "Arqen found {count} new suggestions. Review them below.":
+        "Arqen hittade {count} nya förslag. Granska dem nedan.",
+    "No new lessons this time.": "Inga nya lärdomar den här gången.",
+    "Reflection failed: {error}": "Reflektionen misslyckades: {error}",
     "Suggested": "Föreslaget",
     "obsolete": "föråldrad",
     "MARK OBSOLETE": "MARKERA FÖRÅLDRAD",
