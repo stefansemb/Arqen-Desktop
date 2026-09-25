@@ -112,7 +112,7 @@ class ConversationEngine:
             Message(
                 role="system",
                 content=(
-                    "You are Arqen Desktop. Use normal text for conversation. "
+                    "You are Arqen. Use normal text for conversation. "
                     "Answer in Swedish by default unless the user asks for another language. "
                     f"{tool_rules} "
                     "Never claim a tool ran unless a tool result is provided. "

@@ -721,7 +721,7 @@ class ArqenWindow(QMainWindow):
         super().__init__()
         self.engine = engine
         self.engine.on_tool_request = self.show_tool_request
-        self.setWindowTitle("Arqen Desktop")
+        self.setWindowTitle("Arqen")
         self.resize(900, 620)
         self.setStyleSheet(CyberpunkGreenTheme.stylesheet())
 
@@ -738,7 +738,7 @@ class ArqenWindow(QMainWindow):
         navigation_layout = QVBoxLayout(navigation)
         self.navigation_buttons: dict[str, QPushButton] = {}
         navigation_layout.addWidget(QLabel("ARQEN", objectName="title"))
-        navigation_layout.addWidget(QLabel("MISSION CONTROL"))
+        navigation_layout.addWidget(QLabel(tr("MISSION CONTROL")))
         navigation_layout.addWidget(QLabel(tr("OVERVIEW"), objectName="navSection"))
         for label, icon in (("Dashboard", "⌂"), ("Chat", "◌"), ("Mission Control", "◈")):
             self._add_navigation_button(navigation_layout, label, icon)
@@ -775,7 +775,7 @@ class ArqenWindow(QMainWindow):
         chat_page_layout.addWidget(conversation, 1)
         header = QFrame(objectName="panel")
         header_layout = QVBoxLayout(header)
-        header_layout.addWidget(QLabel("ARQEN DESKTOP", objectName="title"))
+        header_layout.addWidget(QLabel("ARQEN", objectName="title"))
         self.provider_label = provider_label
         self.profile_name = profile_name
         self.status = QLabel(
@@ -1565,7 +1565,7 @@ class ArqenWindow(QMainWindow):
         self.scheduler_worker.start()
         self.task_worker = TaskWorker(self.mission_store, self.mission_runner)
         self.task_worker.start()
-        dock = QDockWidget("MISSION CONTROL", self)
+        dock = QDockWidget(tr("MISSION CONTROL"), self)
         dock.setObjectName("missionControlDock")
         panel = QWidget()
         panel_layout = QVBoxLayout(panel)
@@ -1851,7 +1851,7 @@ class ArqenWindow(QMainWindow):
             if len(parts) >= 2 and parts[0] and parts[1]:
                 steps.append(WorkflowStep(parts[0], parts[1], parts[2] if len(parts) == 3 and parts[2] else None))
         if not steps:
-            QMessageBox.warning(self, "Mission Control", tr("At least one valid step is required."))
+            QMessageBox.warning(self, tr("Mission Control"),tr("At least one valid step is required."))
             return
         self.mission_store.save_workflow(Workflow(uuid4().hex, name.strip(), tuple(steps)))
         self.refresh_mission_workflows()
@@ -1880,7 +1880,7 @@ class ArqenWindow(QMainWindow):
         try:
             self.workflow_runner.run(workflow.name, list(workflow.steps), workflow_id=workflow.id, input_text=input_text)
         except Exception as exc:
-            QMessageBox.warning(self, "Mission Control", str(exc))
+            QMessageBox.warning(self, tr("Mission Control"),str(exc))
         self.refresh_mission_tasks()
         self.refresh_mission_workflow_runs()
         self.refresh_mission_approvals()
@@ -1897,7 +1897,7 @@ class ArqenWindow(QMainWindow):
         try:
             self.workflow_runner.resume(run.id)
         except Exception as exc:
-            QMessageBox.warning(self, "Mission Control", str(exc))
+            QMessageBox.warning(self, tr("Mission Control"),str(exc))
         self.refresh_mission_tasks()
         self.refresh_mission_workflow_runs()
 
@@ -2159,7 +2159,7 @@ class ArqenWindow(QMainWindow):
         allowed_tools = tuple(item.strip() for item in tools_text.split(",") if item.strip())
         unknown = sorted(set(allowed_tools) - set(available))
         if unknown:
-            QMessageBox.warning(self, "Mission Control", tr("Unknown tools: {tools}", tools=", ".join(unknown)))
+            QMessageBox.warning(self, tr("Mission Control"),tr("Unknown tools: {tools}", tools=", ".join(unknown)))
             return
         approvals_text, accepted = QInputDialog.getText(self, tr("New agent"), tr("Tools requiring approval (comma-separated):"))
         if not accepted:
@@ -2167,7 +2167,7 @@ class ArqenWindow(QMainWindow):
         approval_tools = tuple(value.strip() for value in approvals_text.split(",") if value.strip())
         invalid_approvals = sorted(set(approval_tools) - set(allowed_tools))
         if invalid_approvals:
-            QMessageBox.warning(self, "Mission Control", tr("Approval tools must be included in the allowlist."))
+            QMessageBox.warning(self, tr("Mission Control"),tr("Approval tools must be included in the allowlist."))
             return
         self.mission_store.save_agent(Agent(agent_id.strip(), name.strip(), role.strip(), runtime, True, allowed_tools, approval_tools))
         self.refresh_mission_agents()
@@ -2207,14 +2207,14 @@ class ArqenWindow(QMainWindow):
         allowed_tools = tuple(value.strip() for value in tools_text.split(",") if value.strip())
         unknown = sorted(set(allowed_tools) - available)
         if unknown:
-            QMessageBox.warning(self, "Mission Control", tr("Unknown tools: {tools}", tools=", ".join(unknown)))
+            QMessageBox.warning(self, tr("Mission Control"),tr("Unknown tools: {tools}", tools=", ".join(unknown)))
             return
         approvals_text, accepted = QInputDialog.getText(self, tr("Edit agent"), tr("Tools requiring approval:"), text=", ".join(agent.approval_tools))
         if not accepted:
             return
         approval_tools = tuple(value.strip() for value in approvals_text.split(",") if value.strip())
         if set(approval_tools) - set(allowed_tools):
-            QMessageBox.warning(self, "Mission Control", tr("Approval tools must be included in the allowlist."))
+            QMessageBox.warning(self, tr("Mission Control"),tr("Approval tools must be included in the allowlist."))
             return
         self.mission_store.save_agent(Agent(agent.id, name.strip(), role.strip(), runtime, agent.enabled, allowed_tools, approval_tools))
         self.refresh_mission_agents()
@@ -2288,7 +2288,7 @@ class ArqenWindow(QMainWindow):
             try:
                 self.mission_runner.resume(approval.task_id)
             except Exception as exc:
-                QMessageBox.warning(self, "Mission Control", str(exc))
+                QMessageBox.warning(self, tr("Mission Control"),str(exc))
         self.refresh_mission_tasks()
         self.refresh_mission_agents()
         self.refresh_mission_approvals()
@@ -2415,7 +2415,7 @@ class ArqenWindow(QMainWindow):
         if task is None or task.status != "failed":
             return
         if not self.mission_store.retry_task(task.id):
-            QMessageBox.information(self, "Mission Control", tr("The task has reached its maximum attempts."))
+            QMessageBox.information(self, tr("Mission Control"),tr("The task has reached its maximum attempts."))
             return
         self.refresh_mission_tasks()
         self._show_mission_task()
@@ -2426,7 +2426,7 @@ class ArqenWindow(QMainWindow):
         self._show_mission_task()
 
     def _mission_failed(self, message: str) -> None:
-        QMessageBox.warning(self, "Mission Control", message)
+        QMessageBox.warning(self, tr("Mission Control"),message)
         self.refresh_mission_tasks()
         self._show_mission_task()
 

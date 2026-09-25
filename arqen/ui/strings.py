@@ -14,7 +14,7 @@ _SV: dict[str, str] = {
     # Navigation
     "Dashboard": "Översikt",
     "Chat": "Chatt",
-    "Mission Control": "Mission Control",
+    "Mission Control": "Kontrollrum",
     "Agents": "Agenter",
     "Activity": "Aktivitet",
     "Memory": "Minne",
@@ -114,7 +114,7 @@ _SV: dict[str, str] = {
     "TOTAL": "TOTALT",
     # Dashboard
     "DASHBOARD": "ÖVERSIKT",
-    "Mission Control // system overview": "Mission Control // systemöversikt",
+    "Mission Control // system overview": "Arqen // systemöversikt",
     "AGENTS": "AGENTER",
     "ACTIVE TASKS": "AKTIVA UPPGIFTER",
     "APPROVALS": "GODKÄNNANDEN",
@@ -149,7 +149,7 @@ _SV: dict[str, str] = {
     "Delete task": "Ta bort uppgift",
     "Tasks waiting for approval cannot be deleted.": "Uppgifter som väntar på godkännande kan inte tas bort.",
     "The active model call may take a short moment to stop.": "Det pågående modellanropet kan ta en kort stund att stoppa.",
-    "This removes it from Mission Control.": "Den tas bort från Mission Control.",
+    "This removes it from Mission Control.": "Den tas bort från kontrollrummet.",
     "Delete '{title}'?\n\n{warning}": "Ta bort '{title}'?\n\n{warning}",
     "The task has reached its maximum attempts.": "Uppgiften har nått sitt max antal försök.",
     "{title}\nStatus: RUNNING\n\nArqen is working...": "{title}\nStatus: KÖRS\n\nArqen arbetar...",
@@ -310,7 +310,7 @@ _SV: dict[str, str] = {
     "Generated files and workflow artifacts.": "Genererade filer och resultat från arbetsflöden.",
     "REFRESH CONTENT": "UPPDATERA INNEHÅLL",
     # Mission Control overview
-    "MISSION CONTROL": "MISSION CONTROL",
+    "MISSION CONTROL": "KONTROLLRUM",
     "Operational queue // decide what should happen next.": "Operativ kö // bestäm vad som ska hända härnäst.",
     "TASK QUEUE": "UPPGIFTSKÖ",
     "WAITING APPROVAL": "VÄNTAR PÅ GODKÄNNANDE",
