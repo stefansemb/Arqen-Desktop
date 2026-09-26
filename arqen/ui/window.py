@@ -801,6 +801,17 @@ class StatsPanelWidget(QWidget):
         self.last_values["time"].setText("—" if elapsed_ms is None else f"{elapsed_ms / 1000:.1f} s")
 
 
+class _SectionHeader(QFrame):
+    """A header row that toggles the section below it."""
+
+    clicked = pyqtSignal()
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+        super().mousePressEvent(event)
+
+
 class ArqenWindow(QMainWindow):
     microphone_status = pyqtSignal(str)
     microphone_result = pyqtSignal(str)
@@ -1385,7 +1396,18 @@ class ArqenWindow(QMainWindow):
         )
         self.tools_approval_only.toggled.connect(lambda _: self._refresh_tool_catalog())
         controls.addWidget(self.tools_approval_only)
+        self.tools_expand_all = QPushButton(tr("SHOW ALL"))
+        self.tools_expand_all.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self._style_page_action(self.tools_expand_all)
+        self.tools_expand_all.clicked.connect(self._toggle_all_tool_sections)
+        controls.addWidget(self.tools_expand_all)
         layout.addLayout(controls)
+        # Which catalogue sections are open; kept between sessions.
+        stored = QSettings("Arqen", "Arqen Desktop").value("tools_open_sections", [])
+        self._tool_sections_open: set[str] = set(stored if isinstance(stored, list) else [stored] if stored else [])
+        # Sections closed by hand while a search or filter shows everything that matches.
+        self._tool_sections_hidden: set[str] = set()
+        self._tool_filter_seen = ("", False)
 
         self.tools_stack = QStackedWidget()
         self.tools_catalog_host, self.tools_catalog_layout = self._scrolling_page(self.tools_stack)
@@ -1422,6 +1444,7 @@ class ArqenWindow(QMainWindow):
         # Search and filter only apply to the catalogue.
         self.tools_search.setVisible(index == 0)
         self.tools_approval_only.setVisible(index == 0)
+        self.tools_expand_all.setVisible(index == 0)
 
     @staticmethod
     def _clear_layout(layout) -> None:
@@ -1463,6 +1486,11 @@ class ArqenWindow(QMainWindow):
         self._clear_layout(self.tools_catalog_layout)
         query = self.tools_search.text().casefold().strip()
         approval_only = self.tools_approval_only.isChecked()
+        filtering = bool(query) or approval_only
+        if (query, approval_only) != self._tool_filter_seen:
+            # A new search opens every section it matches again.
+            self._tool_filter_seen = (query, approval_only)
+            self._tool_sections_hidden.clear()
         users = self._tool_users()
         sections: dict[str, list[tuple[dict, ToolInfo]]] = {}
         for item in self.engine.gateway.catalog():
@@ -1477,11 +1505,18 @@ class ArqenWindow(QMainWindow):
             empty = QLabel(tr("No tools match the search."))
             empty.setStyleSheet("color: #8d969d; padding: 12px 2px;")
             self.tools_catalog_layout.addWidget(empty)
-        for category in CATEGORIES:
-            entries = sections.get(category)
-            if not entries:
+        shown = [category for category in CATEGORIES if sections.get(category)]
+        self._tool_sections_shown = shown
+        for category in shown:
+            entries = sections[category]
+            if filtering:
+                expanded = category not in self._tool_sections_hidden
+            else:
+                expanded = category in self._tool_sections_open
+            section_users = sorted({name for item, _ in entries for name in users.get(item["name"], [])}, key=str.lower)
+            self.tools_catalog_layout.addWidget(self._tool_section_header(category, entries, section_users, expanded))
+            if not expanded:
                 continue
-            self.tools_catalog_layout.addWidget(QLabel(f"{category.upper()}  ·  {len(entries)}", objectName="sectionLabel"))
             grid = QGridLayout()
             grid.setSpacing(8)
             for index, (item, info) in enumerate(entries):
@@ -1490,8 +1525,76 @@ class ArqenWindow(QMainWindow):
             for column in range(self._TOOL_CARD_COLUMNS):
                 grid.setColumnStretch(column, 1)
             self.tools_catalog_layout.addLayout(grid)
-            self.tools_catalog_layout.addSpacing(6)
+            self.tools_catalog_layout.addSpacing(8)
         self.tools_catalog_layout.addStretch(1)
+        self.tools_expand_all.setText(tr("HIDE ALL") if shown and self._all_tool_sections_open() else tr("SHOW ALL"))
+
+    def _all_tool_sections_open(self) -> bool:
+        shown = getattr(self, "_tool_sections_shown", [])
+        if self.tools_search.text().strip() or self.tools_approval_only.isChecked():
+            return not (set(shown) & self._tool_sections_hidden)
+        return set(shown) <= self._tool_sections_open
+
+    def _tool_section_header(self, category: str, entries: list, section_users: list[str], expanded: bool) -> QFrame:
+        header = _SectionHeader(objectName="toolSection")
+        header.setCursor(Qt.CursorShape.PointingHandCursor)
+        border = "#b7ff18" if expanded else "#30383a"
+        header.setStyleSheet(
+            f"QFrame#toolSection {{ background: #13181b; border: 1px solid {border}; border-radius: 8px; }}"
+            "QFrame#toolSection:hover { border-color: #9fce20; }"
+        )
+        row = QHBoxLayout(header)
+        row.setContentsMargins(14, 10, 14, 10)
+        row.setSpacing(12)
+        arrow = QLabel("▾" if expanded else "▸")
+        arrow.setFixedWidth(14)
+        arrow.setStyleSheet("color: #b7ff18; font-size: 14px; border: none;")
+        row.addWidget(arrow)
+        name = QLabel(category.upper())
+        name.setStyleSheet("color: #f2f0eb; font-weight: bold; font-size: 13px; letter-spacing: 1px; border: none;")
+        row.addWidget(name)
+        count = QLabel(tr("{count} tools", count=len(entries)))
+        count.setStyleSheet("color: #8d969d; font-size: 11px; border: none;")
+        row.addWidget(count)
+        approvals = sum(1 for item, _ in entries if item["requires_confirmation"])
+        if approvals:
+            badge = QLabel(tr("{count} require approval", count=approvals))
+            badge.setStyleSheet("color: #ffd166; border: 1px solid #6b5a2a; border-radius: 8px; padding: 1px 7px; font-size: 10px;")
+            row.addWidget(badge)
+        row.addStretch(1)
+        everyone = len(section_users) > 1 and len(section_users) == getattr(self, "_tool_agent_total", 0)
+        if section_users:
+            text = tr("Used by: {agents}", agents=tr("all agents") if everyone else " · ".join(section_users))
+            color = "#9fce20"
+        else:
+            text, color = tr("No agent uses these"), "#657078"
+        used_by = QLabel(text)
+        used_by.setStyleSheet(f"color: {color}; font-size: 11px; border: none;")
+        row.addWidget(used_by)
+        header.clicked.connect(lambda name=category: self._toggle_tool_section(name))
+        return header
+
+    def _toggle_tool_section(self, category: str) -> None:
+        if self.tools_search.text().strip() or self.tools_approval_only.isChecked():
+            self._tool_sections_hidden ^= {category}
+        else:
+            self._tool_sections_open ^= {category}
+            self._save_tool_sections()
+        self._refresh_tool_catalog()
+
+    def _toggle_all_tool_sections(self) -> None:
+        shown = set(getattr(self, "_tool_sections_shown", []))
+        filtering = self.tools_search.text().strip() or self.tools_approval_only.isChecked()
+        opening = not self._all_tool_sections_open()
+        if filtering:
+            self._tool_sections_hidden = set() if opening else set(shown)
+        else:
+            self._tool_sections_open = (self._tool_sections_open | shown) if opening else (self._tool_sections_open - shown)
+            self._save_tool_sections()
+        self._refresh_tool_catalog()
+
+    def _save_tool_sections(self) -> None:
+        QSettings("Arqen", "Arqen Desktop").setValue("tools_open_sections", sorted(self._tool_sections_open))
 
     def _tool_card(self, item: dict, info: ToolInfo, agents: list[str]) -> QFrame:
         card = QFrame(objectName="toolCard")

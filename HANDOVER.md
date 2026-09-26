@@ -90,7 +90,11 @@ att den blir avbruten i stället för att vänta för evigt.
 Chatt-vyn har en chattlista till vänster (högerklick: Öppna, Byt namn, Ta bort;
 F2 och Delete). Verktyg-vyn har flikarna Katalog, Agenter och Logg; svenska namn
 och kategorier ligger i `arqen/ui/tool_catalog.py`, och ett test kräver att
-varje nytt verktyg får en post där.
+varje nytt verktyg får en post där. Katalogen visar en ihopfällbar rubrikrad per
+kategori (antal, antal som kräver godkännande, vilka agenter som använder
+gruppen); sökning och filtret KRÄVER GODKÄNNANDE fäller ut de sektioner som
+har träffar, VISA ALLA/DÖLJ ALLA fäller allt, och vilka sektioner som är öppna
+sparas i QSettings (`tools_open_sections`).
 
 Scout är research-agent. Webbresearchen (`arqen/tools/research_tools.py`,
 byggd 2026-09-26) håller när sajter säger ifrån:
@@ -306,7 +310,7 @@ Faser:
 
 ## Teststatus
 
-227 tester, alla gröna. Kör efter ändringar:
+230 tester, alla gröna. Kör efter ändringar:
 
 ```powershell
 python -m compileall -q arqen
